@@ -1,0 +1,41 @@
+# Build and distribution directories
+build/
+dist/
+*.egg-info/
+*.egg/
+*.whl
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.log
+.venv/
+
+# IDE and Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# PyInstaller
+*.manifest
+*.spec.bak
+*.spec.old
+
+# Application data
+.config/symlink_app/
+~/.config/symlink_app/
+%APPDATA%/SymlinkApp/
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
