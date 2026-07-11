@@ -30,9 +30,41 @@ def convert_png_to_ico(png_path="symlink_manager_icon.png", ico_path="symlink_ma
     try:
         from PIL import Image
         img = Image.open(png_path)
-        # Save as .ico with multiple sizes for better quality
-        img.save(ico_path, format="ICO", sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
-        print(f"✅ Converted {png_path} -> {ico_path}")
+
+        # Convert to RGBA if not already in that mode
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+
+        # Get original dimensions
+        orig_w, orig_h = img.size
+        print(f"ℹ️  Original icon size: {orig_w}x{orig_h}")
+
+        # Only include sizes that are ≤ original (never upscale)
+        all_sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+        icon_sizes = [(w, h) for w, h in all_sizes if w <= orig_w and h <= orig_h]
+
+        if not icon_sizes:
+            # If even 16x16 is larger, just use the original
+            icon_sizes = [(orig_w, orig_h)]
+
+        # If original size matches one of the targets perfectly, use it directly
+        # Otherwise downscale with high-quality resampling
+        resized_images = []
+        for size in icon_sizes:
+            if size == (orig_w, orig_h):
+                resized_images.append(img.copy())
+            else:
+                resized = img.resize(size, Image.LANCZOS)
+                resized_images.append(resized)
+
+        # Save using the first image with the rest appended
+        resized_images[0].save(
+            ico_path,
+            format="ICO",
+            sizes=icon_sizes,
+            append_images=resized_images[1:],
+        )
+        print(f"✅ Converted {png_path} -> {ico_path} ({len(icon_sizes)} sizes: {icon_sizes})")
         return True
     except ImportError:
         print("⚠️ Pillow not installed. Install it with: pip install Pillow")

@@ -1,222 +1,140 @@
-# Symlink Manager - Build Guide
+# Symlink Manager — Build Guide
 
-This guide explains how to build standalone executable applications for Windows, macOS, and Linux.
+Instructions for building standalone executables on Windows, macOS, and Linux using PyInstaller.
+
+---
 
 ## Prerequisites
 
-1. **Python 3.8+** installed on your system
-2. **uv** (recommended) or pip for managing packages
-3. The virtual environment should be set up (see Installation section)
+- Python 3.8+
+- [uv](https://docs.astral.sh/uv/) (recommended) or pip
+- Virtual environment with all dependencies installed:
+  ```bash
+  uv venv
+  uv pip install -r requirements.txt
+  ```
+
+---
 
 ## Quick Build
 
-### macOS & Linux
-
+### macOS / Linux
 ```bash
-cd /Users/noobaly/Documents/pythontools/Symlink
 chmod +x build.sh
 ./build.sh
 ```
 
 ### Windows
-
-Double-click `build.bat` or run in Command Prompt:
-
 ```cmd
-cd C:\path\to\Symlink
 build.bat
 ```
 
-## Detailed Build Instructions
+Both scripts activate the virtual environment and run `build_executable.py`, which handles platform detection, icon conversion, and PyInstaller invocation.
 
-### For macOS
+---
 
-1. **Navigate to project directory:**
-   ```bash
-   cd /Users/noobaly/Documents/pythontools/Symlink
-   ```
+## Output
 
-2. **Ensure virtual environment is activated** (optional but recommended):
-   ```bash
-   source .venv/bin/activate
-   ```
+| Platform | Executable |
+|---|---|
+| **macOS** | `dist/SymlinkManager.app` |
+| **Windows** | `dist\SymlinkManager.exe` |
+| **Linux** | `dist/SymlinkManager` |
 
-3. **Run the build script:**
-   ```bash
-   ./build.sh
-   ```
+Run the executable directly or create a shortcut on your Desktop.
 
-4. **Find the executable:**
-   - Location: `dist/SymlinkManager.app`
-   - Run with: `open dist/SymlinkManager.app`
-   - Or double-click `SymlinkManager.app` in Finder
+---
 
-5. **Create a Desktop shortcut (optional):**
-   ```bash
-   # Create an alias on Desktop
-   ln -s "$(pwd)/dist/SymlinkManager.app" ~/Desktop/SymlinkManager.app
-   ```
+## Customizing the Build
 
-### For Windows
+Edit `symlink_app.spec` or `build_executable.py` to change:
 
-1. **Open Command Prompt or PowerShell**
+| Customization | How |
+|---|---|
+| **App name** | Change `--name` in build scripts or `name=` in `.spec` |
+| **App icon** | Replace `symlink_manager_icon.png` (PNG) — Windows builds auto-convert to `.ico` |
+| **Console output** (debugging) | In `symlink_app.spec`, set `console=True` |
+| **Single-file bundle** | Add `--onefile` to the PyInstaller command (larger startup time, single output) |
 
-2. **Navigate to project directory:**
-   ```cmd
-   cd C:\path\to\Symlink
-   ```
+---
 
-3. **Double-click `build.bat`** or run:
-   ```cmd
-   build.bat
-   ```
+## Manual Build with PyInstaller
 
-4. **Find the executable:**
-   - Location: `dist\SymlinkManager.exe`
-   - Double-click to run or create a shortcut on Desktop
-
-### For Linux
-
-1. **Navigate to project directory:**
-   ```bash
-   cd /path/to/Symlink
-   ```
-
-2. **Run the build script:**
-   ```bash
-   chmod +x build.sh
-   ./build.sh
-   ```
-
-3. **Find the executable:**
-   - Location: `dist/SymlinkManager`
-   - Run with: `./dist/SymlinkManager`
-   - Or make it executable: `chmod +x dist/SymlinkManager`
-
-## Build Options
-
-To customize the build, you can edit `build_executable.py` or `symlink_app.spec`:
-
-### Common Customizations
-
-**Change app name:**
-- Edit the `--name` parameter in build scripts
-- Edit `bundle_identifier` in `symlink_app.spec`
-
-**Add an icon:**
-- Create an icon file (`.ico` for Windows, `.icns` for macOS)
-- Add to `symlink_app.spec`: `icon='path/to/icon'`
-
-**Enable console output (for debugging):**
-- In `symlink_app.spec`, change `console=False` to `console=True`
-
-## Troubleshooting
-
-### Build fails with "module not found"
-
-**Solution:** Ensure all dependencies are installed:
-```bash
-uv pip install -r requirements.txt
-```
-
-### macOS: "App is damaged" message
-
-**Solution:** Code sign the app:
-```bash
-xcode-select --install
-codesign --remove-signature dist/SymlinkManager.app
-codesign -s - dist/SymlinkManager.app
-```
-
-### Windows: "Python not found" error
-
-**Solution:** Ensure Python is in your PATH or use full path to activate venv:
-```cmd
-.venv\Scripts\python.exe build_executable.py
-```
-
-### Windows: "icon must be .ico format" error
-
-**Solution:** The build process now automatically converts the PNG icon to ICO format for Windows builds. If you encounter this error manually, ensure you're using the updated build scripts.
-
-### Windows: "The specified procedure could not be found" error
-
-**Solution:** This error occurs due to a PyQt6 version mismatch. The application now uses PyQt6==6.11.0 which matches the Qt DLLs. If you still encounter this error:
-1. Ensure you're using Python 3.10
-2. Make sure your requirements.txt has `PyQt6==6.11.0` and `PyQt6-Qt6==6.11.1`
-3. If the error persists, you may need to manually add `python3.dll` or other .dll files like vcruntime from a working Python installation to your virtual environment's `Scripts` folder
-
-## Distribution
-
-### macOS
-
-1. Create a `.dmg` file:
-   ```bash
-   hdiutil create -volname "SymlinkManager" -srcfolder dist/SymlinkManager.app -ov -format UDZO SymlinkManager.dmg
-   ```
-
-2. Distribute the `.dmg` file
-
-### Windows
-
-1. The `.exe` file is ready to distribute
-2. Optionally create an installer using NSIS or InnoSetup
-3. Distribute the `.exe` or installer
-
-### Linux
-
-1. The binary is ready to distribute
-2. Optionally create a `.AppImage` using AppImageKit
-3. Or package as `.snap` for Snapcraft
-
-## Performance Notes
-
-- Initial startup may take a few seconds as Python initializes
-- All libraries are bundled, resulting in a larger file size (~150-200 MB)
-- For smallest size, consider using PyInstaller's `--onefile` option
-
-## Build Output Structure
-
-```
-dist/
-├── SymlinkManager.app/        # macOS app bundle
-│   └── Contents/
-│       └── MacOS/SymlinkManager
-├── SymlinkManager.exe         # Windows executable
-├── SymlinkManager             # Linux executable
-└── [Other dependencies]
-```
-
-## Advanced: Manual Build with PyInstaller
-
-If you prefer manual control, use PyInstaller directly:
+If you prefer to run PyInstaller directly:
 
 ```bash
-# macOS/Linux
+# macOS / Linux
 .venv/bin/pyinstaller symlink_app.spec
 
 # Windows
 .venv\Scripts\pyinstaller.exe symlink_app.spec
 ```
 
-## Version Management
+---
 
-Update version in multiple places:
-1. `app.py` - `setApplicationVersion("1.0.0")`
-2. This guide - Update version numbers mentioned
-3. `README.md` - Update version information
+## Troubleshooting
 
-### Windows Build Fixes
+### "module not found"
+```bash
+uv pip install -r requirements.txt
+```
 
-The Windows build has been updated to address the following issues:
-- **Icon Format**: PyInstaller now automatically converts PNG to ICO format for Windows executables
-- **PyQt6 Version Mismatch**: Fixed "The specified procedure could not be found" error by using PyQt6==6.11.0 with PyQt6-Qt6==6.11.1
+### macOS: "App is damaged"
+```bash
+xcodelect --install
+codesign --remove-signature dist/SymlinkManager.app
+codesign -s - dist/SymlinkManager.app
+```
 
-## Support
+### Windows: "Python not found"
+```cmd
+.venv\Scripts\python.exe build_executable.py
+```
 
-For PyInstaller documentation: https://pyinstaller.org/
+### Windows: "icon must be .ico format"
+The build script auto-converts `symlink_manager_icon.png` to `.ico` using Pillow. If it fails, install Pillow:
+```bash
+uv pip install Pillow
+```
 
-For issues specific to this project, ensure:
-- All dependencies in `requirements.txt` are installed
-- Virtual environment is properly set up
-- You're using compatible Python version (3.8+)
+### Windows: "The specified procedure could not be found"
+This is caused by a PyQt6 DLL mismatch. The project pins compatible versions in `requirements.txt`:
+- `PyQt6==6.11.0`
+- `PyQt6-Qt6==6.11.1`
+
+If the error persists:
+1. Use Python 3.10.
+2. Verify the pinned versions are installed.
+3. Manually copy `python3.dll` or `vcruntime*.dll` from a working Python installation into your venv's `Scripts` folder.
+
+---
+
+## Distribution
+
+### macOS — Create a .dmg
+```bash
+hdiutil create -volname "SymlinkManager" -srcfolder dist/SymlinkManager.app -ov -format UDZO SymlinkManager.dmg
+```
+
+### Windows — Create an Installer
+Use [NSIS](https://nsis.sourceforge.io/) or [Inno Setup](https://jrsoftware.org/isinfo.php) to wrap `dist\SymlinkManager.exe`.
+
+### Linux — Create an AppImage
+Use [AppImageKit](https://appimage.org/) or package as a `.snap` via Snapcraft.
+
+---
+
+## Build Output Structure
+
+```
+dist/
+├── SymlinkManager.app/        # macOS bundle
+│   └── Contents/MacOS/SymlinkManager
+├── SymlinkManager.exe         # Windows executable
+└── SymlinkManager             # Linux executable
+```
+
+## Performance Notes
+
+- **Bundle size:** ~150–200 MB (Python + Qt libraries bundled).
+- **For smaller size:** Use `--onefile` (slower startup, single output file).

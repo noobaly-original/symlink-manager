@@ -1,108 +1,100 @@
 # Symlink Management Guide
 
-## Overview
+How the Symlink Manager tracks, verifies, and manages your symbolic links.
 
-The Symlink Manager now includes a comprehensive symlink tracking and management system. You can view, edit, verify, and delete all symlinks you've created through the application.
+---
 
-## Features
+## Automatic Tracking
 
-### 1. Automatic Tracking
-Every symlink created through the Symlink Manager is automatically added to the tracking system. The app stores:
-- Target symlink path
-- Source path
-- Creation date
-- Status (active/inactive)
-- Custom notes
+Every symlink created through the app is automatically recorded in `managed_symlinks.json`. The app stores:
 
-### 2. Manage Tab
+| Field | Description |
+|---|---|
+| `target` | Where the symlink was created |
+| `source` | What the symlink points to |
+| `created_at` | ISO 8601 timestamp of creation |
+| `notes` | User-defined description |
+| `active` | Whether the symlink is marked as active |
 
-The **Manage** tab provides a complete interface to:
-- View all tracked symlinks
-- Edit notes for each symlink
-- Delete symlinks (from disk and tracking)
-- Verify symlink status
-- Check for broken or missing links
+---
 
-### 3. Symlink Table
+## The Manage Tab
 
-The table displays:
-- **Target**: Where the symlink is located
-- **Source**: What the symlink points to
-- **Status**: ✓ Active, ○ Inactive, or Missing
-- **Notes**: User-defined notes about the symlink
-- **Created**: Date the symlink was created
+The **Manage** tab provides a complete interface for working with tracked symlinks.
 
-## Managing Symlinks
+### Table Columns
 
-### View All Symlinks
+| Column | Description |
+|---|---|
+| **Target** | Symlink location (truncated if >50 chars; full path stored internally) |
+| **Source** | Original file/folder the symlink points to |
+| **Status** | ✓ Active · ✗ Broken · ? Missing · ○ Inactive |
+| **Notes** | User-added description |
+| **Created** | Date of creation (YYYY-MM-DD) |
 
-1. Click the **Manage** tab
-2. All tracked symlinks are displayed in the table
-3. Click **Refresh** to update the list
+### Actions
 
-### Edit Notes
+| Action | How |
+|---|---|
+| **Refresh** | Reloads the table and re-verifies all symlinks |
+| **Edit Notes** | Select a row → **Edit Notes** → enter description → **Save** |
+| **Delete** | Select a row → **Delete** → confirm → symlink removed from disk and tracking |
+| **Verify All** | Checks every tracked symlink and shows a full report |
+| **Right-click** | Copy target or source path to clipboard |
 
-Add or edit notes for a symlink:
-
-1. Select a symlink in the table
-2. Click **Edit Notes**
-3. Enter or modify the notes
-4. Click **Save**
-
-**Example notes:**
-- "Backup directory link"
-- "Development environment"
-- "Project X resources"
-
-### Delete a Symlink
-
-Remove a symlink from the system:
-
-1. Select a symlink in the table
-2. Click **Delete**
-3. Confirm the deletion
-4. The symlink is removed from disk and tracking
-
-⚠️ **Warning**: This action is permanent and cannot be undone.
-
-### Verify All Symlinks
-
-Check the status of all tracked symlinks:
-
-1. Click **Verify All**
-2. A report shows:
-   - Total number of symlinks
-   - Active symlinks
-   - Broken links (target doesn't exist)
-   - Missing symlinks (not found on disk)
+---
 
 ## Symlink Status
 
-### ✓ Active
-- Symlink exists on disk
-- Target file/directory exists
-- Fully functional
+| Status | Icon | Meaning |
+|---|---|---|
+| **Active** | ✓ | Symlink exists on disk and its target is reachable |
+| **Broken** | ✗ | Symlink exists but the original target was moved or deleted |
+| **Missing** | ? | Tracked symlink was deleted outside the app |
+| **Inactive** | ○ | Symlink is tracked but marked as inactive |
 
-### ○ Inactive
-- Symlink marked as inactive
-- Still on disk but not in use
-- Can be reactivated or deleted
+### Status Bar Summary
 
-### ✗ Broken
-- Symlink exists but target is missing
-- Original file/directory was moved or deleted
-- Symlink is non-functional
+After refreshing, the status bar shows a quick overview:
+```
+Total: 5 | Active: 4 | Broken: 1 | Missing: 0
+```
 
-### ? Missing
-- Tracked symlink not found on disk
-- Was deleted outside the app
-- Can be removed from tracking
+---
 
-## Storage
+## Workflow Examples
+
+### 1. Organize Development Projects
+
+1. Create symlinks from your project folders to your Desktop.
+2. Add notes like `"Main development project"` via **Edit Notes**.
+3. Use **Verify All** periodically to check everything is intact.
+4. Delete symlinks when the project is archived.
+
+### 2. Audit Broken Links
+
+1. Go to the **Manage** tab.
+2. Click **Verify All**.
+3. Review the report for broken (✗) or missing (?) symlinks.
+4. Delete broken entries and recreate symlinks with correct paths.
+
+### 3. Document with Notes
+
+Use **Edit Notes** to describe each symlink's purpose:
+- `"Active backup location"`
+- `"Configuration files for App X"`
+- `"Temporary alias — remove after migration"`
+
+---
+
+## Storage Format
 
 Managed symlinks are stored in:
-- **macOS/Linux**: `~/.config/symlink_app/managed_symlinks.json`
-- **Windows**: `%APPDATA%\SymlinkApp\managed_symlinks.json`
+
+| Platform | File |
+|---|---|
+| **Windows** | `%APPDATA%\SymlinkApp\managed_symlinks.json` |
+| **macOS / Linux** | `~/.config/symlink_app/managed_symlinks.json` |
 
 Example structure:
 ```json
@@ -110,8 +102,8 @@ Example structure:
   "symlinks": [
     {
       "id": 1,
-      "source": "/Users/username/Projects/MyApp",
-      "target": "/Users/username/Desktop/MyApp",
+      "source": "/Users/alice/Projects/MyApp",
+      "target": "/Users/alice/Desktop/MyApp",
       "notes": "Development link",
       "created_at": "2026-07-04T18:30:45",
       "active": true
@@ -120,87 +112,33 @@ Example structure:
 }
 ```
 
-## Workflow Examples
+> ⚠️ Do not edit this file while the app is running — changes will be overwritten.
 
-### Example 1: Managing Development Links
-
-1. **Create** a symlink from your project folder to Desktop
-2. **Edit Notes** to add: "Main development project"
-3. **Verify** the link works properly
-4. When done, **Delete** the symlink
-
-### Example 2: Checking Broken Links
-
-1. Go to **Manage** tab
-2. Click **Verify All** to get a report
-3. Identify broken links (status shows ✗)
-4. Delete or recreate as needed
-
-### Example 3: Organizing with Notes
-
-1. Create multiple symlinks
-2. Click **Edit Notes** on each
-3. Add descriptive notes:
-   - "Active backup location"
-   - "Configuration files"
-   - "Temporary alias"
-4. Use notes to remember purpose of each link
-
-## Advanced Features
-
-### Batch Operations
-
-While not yet automated, you can:
-1. Create multiple symlinks one at a time
-2. Use **Verify All** to check all at once
-3. Delete them individually as needed
-
-### History Integration
-
-- **History** tab shows recent creations
-- **Manage** tab shows all currently tracked
-- Check both for complete management view
-
-### Status Indicators
-
-The status bar shows quick stats:
-```
-Total: 5 | Active: 4 | Broken: 1 | Missing: 0
-```
+---
 
 ## Troubleshooting
 
-### Symlink Shows as "Missing"
+### Symlink shows as "Missing"
+The symlink was deleted outside the app (e.g. via File Explorer or `rm`).
+- Click **Delete** to remove it from tracking.
+- Recreate the symlink if needed.
 
-The symlink was deleted outside the app:
-1. Delete it from tracking (**Delete** button)
-2. Recreate if needed
+### Symlink shows as "Broken"
+The original source file/folder was moved or deleted.
+- Locate the original file/folder.
+- Delete the broken symlink from tracking.
+- Recreate with the correct source path.
 
-### Symlink Shows as "Broken"
-
-The target file/directory was moved:
-1. Find the original file/directory
-2. Delete the broken symlink
-3. Recreate with new target path
-
-### Can't Delete Symlink
-
+### Can't delete a symlink
 Possible causes:
-- Insufficient permissions (try running as admin)
-- Symlink is in use by another application
-- File is locked
+- Insufficient permissions — run the app as administrator (Windows) or use `sudo` (macOS/Linux).
+- The symlink is in use by another application — close the application first.
+- The file is locked — check with `lsof` (macOS/Linux) or Handle (Windows).
 
-Solutions:
-1. Close other applications using the symlink
-2. Run as administrator (Windows)
-3. Check file permissions (macOS/Linux)
+### Lost tracking data
+If `managed_symlinks.json` is accidentally deleted, the app will start fresh with an empty tracking list. Symlinks on disk are **not** affected — only the tracking metadata is lost.
 
-### Lost Tracking Information
-
-If `managed_symlinks.json` is deleted:
-1. Symlinks on disk still work
-2. They're just no longer tracked
-3. Manually create the symlinks again to add them to tracking
+---
 
 ## Best Practices
 

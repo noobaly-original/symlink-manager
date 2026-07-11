@@ -1,274 +1,167 @@
 # Symlink Manager
 
-A modern, cross-platform GUI application for creating and managing symlinks on Windows, macOS, and Linux.
+A modern, cross-platform GUI application for creating and managing symbolic links on Windows, macOS, and Linux. Built with PyQt6.
 
-THIS PROJECT IS VIBE CODED FROM START TO FINISH !
+---
 
 ## Features
 
-### Core Features
-- 🔗 **Create Symlinks** - Full support for file and directory symlinks
-- 🌍 **Cross-Platform** - Works on Windows, macOS, and Linux
-- 🎨 **Modern GUI** - Beautiful dark and light themes with transparency elements
-- 🛡️ **Safe Operation** - Validates paths before creating symlinks
-- 🔒 **Admin Support** - Windows administrator mode for system-protected directories
+### Core
+- 🔗 **Create Symlinks** — File and directory symlinks on any supported OS
+- 🎨 **Modern GUI** — Dark/light themes with drag-and-drop path input
+- 🛡️ **Path Validation** — Validates paths before creating symlinks
+- 🔒 **Admin Mode** (Windows) — Create symlinks in system-protected directories
+- 📋 **Symlink Tracking** — Automatically track, annotate, verify, and delete symlinks
+- 📊 **History & Statistics** — View creation history and most-used paths
 
-### Advanced Options
-- **Relative Symlinks** - Create relative symlinks (when on the same drive)
-- **Force Creation** - Overwrite existing targets
-- **Confirmation Dialog** - Optional confirmation before creation
-- **Path Validation** - Check paths before creating symlinks
+### Options
+| Option | Description |
+|---|---|
+| **Relative** | Creates a relative symlink (useful for portable structures) |
+| **Force** | Overwrites any existing file/folder at the target location |
+| **Admin** (Windows) | Elevates to administrator privileges for protected directories |
+| **Confirm** | Shows a confirmation dialog before creating the symlink |
 
-### Symlink Management
-- 📋 **Track Symlinks** - Automatically track all created symlinks
-- ✏️ **Edit Notes** - Add notes to remember each symlink's purpose
-- 🗑️ **Delete Symlinks** - Safely delete symlinks from disk and tracking
-- 🔍 **Verify Status** - Check which symlinks are active, broken, or missing
+---
 
-### History & Statistics
-- 📊 **Creation History** - Track all symlink creations with timestamps
-- 📈 **Most Used Destinations** - View your most frequently used source and target paths
-- 🕐 **Recent Paths** - Quick access to recently used paths
-- 💾 **Persistent Settings** - Application settings are saved automatically
-
-## Installation
+## Quick Start
 
 ### Prerequisites
-- Python 3.8 or higher
-- uv (recommended) or pip
+- Python 3.8+
+- [uv](https://docs.astral.sh/uv/) (recommended) or pip
 
-### Option 1: Run from Source (Recommended for Development)
-
-1. **Clone or download the repository:**
-   ```bash
-   cd /path/to/Symlink
-   ```
-
-2. **Create virtual environment with uv:**
-   ```bash
-   uv venv
-   ```
-
-3. **Install dependencies:**
-   ```bash
-   uv pip install -r requirements.txt
-   ```
-
-4. **Run the application:**
-   ```bash
-   .venv/bin/python app.py
-   ```
-
-### Option 2: Build Standalone Executable (For Distribution)
-
-**macOS/Linux:**
+### Run from Source
 ```bash
-./build.sh
-open dist/SymlinkManager.app              # macOS
-./dist/SymlinkManager                     # Linux
+# Clone and enter the project directory
+cd symlink-manager
+
+# Create a virtual environment and install dependencies
+uv venv
+uv pip install -r requirements.txt
+
+# Launch the application
+.venv/bin/python app.py      # macOS / Linux
+.venv\Scripts\python app.py  # Windows
 ```
 
-**Windows:**
-```cmd
-build.bat
-dist\SymlinkManager.exe
+### Build a Standalone Executable
+```bash
+./build.sh          # macOS / Linux
+build.bat           # Windows
 ```
+See [BUILD_GUIDE.md](BUILD_GUIDE.md) for detailed instructions.
 
-See [BUILD_GUIDE.md](BUILD_GUIDE.md) for detailed build instructions.
+---
 
 ## Usage
 
 ### Creating a Symlink
 
-1. **Launch the application:**
-   ```bash
-   python app.py
-   ```
-
-2. **On the "Create Symlink" tab:**
-   - **Source**: Enter or browse to the file/folder you want to link to
-   - **Target**: Enter or browse to where the symlink should be created
-   - **Options**: Choose any desired options
-   - **Create Symlink**: Click the button to create
-
-3. **Confirmation**: If enabled, confirm the operation in the dialog
-
-### Options Explained
-
-- **Relative Symlink**: Creates a symlink with a relative path instead of absolute. Useful for portable directory structures.
-- **Force Creation**: Overwrites existing target if it already exists.
-- **Administrator Privileges** (Windows only): Required for some system directories.
-- **Show Confirmation**: Displays a confirmation dialog before creating the symlink.
+1. Go to the **Create** tab.
+2. **Source** — The file or folder you want to link **to** (drag & drop or browse).
+3. **Target** — Where the symlink should be created. When you drag a folder, the app auto-generates a name like `symlink-a1b2c3d4`. If you drag a **file**, the app uses its parent directory instead.
+4. Toggle any options (Relative, Force, Admin, Confirm).
+5. Click **Create Symlink**.
 
 ### Managing Symlinks
 
-1. **Click the "Manage" tab** to:
-   - View all symlinks you've created
-   - See their status (active, broken, missing)
-   - Add or edit notes for each symlink
-   - Delete symlinks from disk and tracking
-   - Verify the health of all symlinks
+The **Manage** tab shows all symlinks created through the app:
 
-2. **Edit Notes**:
-   - Select a symlink
-   - Click "Edit Notes"
-   - Add information about the symlink's purpose
-   - Click "Save"
+| Action | How |
+|---|---|
+| **View** | Table shows target, source, status, notes, and creation date |
+| **Edit Notes** | Select a symlink → **Edit Notes** → add a description → **Save** |
+| **Delete** | Select a symlink → **Delete** → confirm → removed from disk and tracking |
+| **Verify All** | Checks every tracked symlink and reports active, broken, and missing links |
+| **Right-click** | Copy target or source path to clipboard |
 
-3. **Delete Symlinks**:
-   - Select a symlink
-   - Click "Delete"
-   - Confirm deletion
-   - Symlink is removed from disk and tracking
+**Status indicators:**
+- ✓ **Active** — Symlink exists and its target is reachable
+- ✗ **Broken** — Symlink exists but the original target was moved or deleted
+- ? **Missing** — Symlink was deleted outside the app
+- ○ **Inactive** — Marked as inactive in tracking
 
-4. **Verify Symlinks**:
-   - Click "Verify All"
-   - See a report of all symlinks and their status
-   - Identify broken or missing links
+### History & Statistics
 
-### Viewing History
+The **History** tab shows:
+- Recent symlink creations with timestamps and success/failure status
+- Most frequently used target directories
+- Right-click any row to copy paths
 
-1. **Click the "History" tab** to see:
-   - Recent symlink creations with timestamps and status
-   - Recently used source paths
-   - Recently used target paths
+### Settings
 
-2. **Click "Refresh"** to update the history
-3. **Click "Clear History"** to remove all creation records
+The **Settings** tab lets you:
+- Switch between **Dark** and **Light** themes
+- View platform and Python version info
 
-### Viewing Statistics
+---
 
-1. **Click the "Most Used" tab** to see:
-   - Most frequently used source paths
-   - Most frequently used target destinations
-   - Count of how many times each path was used
+## Configuration Files
 
-2. **Click "Refresh Statistics"** to update
+All data is stored as JSON in a platform-specific directory:
 
-### Managing Settings
+| Platform | Settings & History |
+|---|---|
+| **Windows** | `%APPDATA%\SymlinkApp\` |
+| **macOS / Linux** | `~/.config/symlink_app/` |
 
-1. **Click the "Settings" tab** to:
-   - Change the application theme (Dark/Light)
-   - Toggle auto-expand paths
-   - View system information and config directory
+| File | Contents |
+|---|---|
+| `settings.json` | Window geometry, theme preference, last-used directories |
+| `history.json` | Creation records (last 200), recently used source/target paths |
+| `managed_symlinks.json` | Tracked symlinks with notes and status |
 
-## Platform-Specific Notes
+> ⚠️ Do not edit these files while the app is running — changes will be overwritten.
+
+---
+
+## Platform Notes
 
 ### Windows
-- Symlinks may require administrator privileges for system directories
-- The `/D` flag is used for directory junctions
-- Use the "Administrator Privileges" option if standard creation fails
-- Windows 10+ recommended for best symlink support
-- **Build Notes**: The Windows build now automatically handles icon conversion from PNG to ICO format and uses compatible PyQt6 versions (6.11.0) to prevent "The specified procedure could not be found" errors
+- Symlinks in system directories (e.g. `C:\Program Files`) require **Admin** mode.
+- Uses the `mklink` command internally; `/D` flag for directory junctions.
+- Windows 10+ recommended for best symlink support.
+- The build process auto-converts PNG icons to ICO format.
 
 ### macOS
-- Full symlink support without special privileges
-- Relative symlinks work across mounted drives
-- Symlinks appear as aliases in Finder
+- Full symlink support without special privileges.
+- Relative symlinks work across mounted drives.
+- Symlinks appear as aliases in Finder.
 
 ### Linux
-- Full symlink support without special privileges
-- Works with all filesystems that support symlinks
-- Relative symlinks useful for portable installations
+- Full symlink support (ext4, Btrfs, XFS, etc.).
+- No special privileges required for standard directories.
 
-## Configuration
-
-Settings are stored in:
-- **Windows**: `%APPDATA%\SymlinkApp\settings.json`
-- **macOS/Linux**: `~/.config/symlink_app/settings.json`
-
-History is stored in:
-- **Windows**: `%APPDATA%\SymlinkApp\history.json`
-- **macOS/Linux**: `~/.config/symlink_app/history.json`
-
-You can manually edit these JSON files, but changes made while the app is running will be overwritten.
+---
 
 ## Troubleshooting
 
-### "Source path does not exist"
-- Verify the source path is correct
-- Ensure the file/folder hasn't been moved or deleted
-- Use the Browse button to select the path
+| Problem | Solution |
+|---|---|
+| **"Source path does not exist"** | Verify the path is correct and the file/folder hasn't been moved. Use the **Browse** button. |
+| **"Target path already exists"** | Enable **Force** to overwrite, or choose a different target location. |
+| **"No write permission"** (Linux/macOS) | Check write permissions on the target directory (`chmod` if needed). |
+| **App won't start** | Run from a terminal to see error messages. Ensure Python 3.8+ and all dependencies are installed. |
+| **Drag & drop not working** | Your file manager must support standard MIME types. Works on Windows 7+, macOS 10.13+, and modern Linux desktops. |
 
-### "Target path already exists"
-- Check if the target location already has a file or symlink
-- Use the "Force Creation" option to overwrite
-- Or choose a different target location
+---
 
-### "No write permission for target directory" (Linux/macOS)
-- Ensure you have write permissions in the target directory
-- Use `chmod` to change permissions if needed
-- May need to use `sudo` or administrator privileges
+## Project Structure
 
-### "Access Denied" (Windows)
-- Try enabling "Administrator Privileges" option
-- Run the application as Administrator
-- Some system directories require elevation
-
-### "The specified procedure could not be found" (Windows)
-- This error is typically caused by a PyQt6 version mismatch
-- Ensure you're using Python 3.10 with PyQt6==6.11.0 and PyQt6-Qt6==6.11.1
-- If the error persists, you may need to manually add `python3.dll` from a working Python installation to your virtual environment's `Scripts` folder
-
-## Command Line Usage
-
-To create symlinks from the command line using the underlying module:
-
-```python
-from symlink_manager import SymlinkManager
-
-success, message = SymlinkManager.create_symlink(
-    source='/path/to/original',
-    target='/path/to/symlink',
-    relative=False,
-    force=False
-)
-
-print(message)
 ```
-
-## Advanced Features
-
-### Settings API
-```python
-from settings_manager import SettingsManager
-
-settings = SettingsManager()
-
-# Get a setting
-theme = settings.get_setting('theme', 'dark')
-
-# Set a setting
-settings.set_setting('theme', 'light')
-
-# Get history
-recent_sources = settings.get_history('sources', limit=10)
-
-# Get statistics
-most_used = settings.get_most_used_destinations(limit=10)
+symlink-manager/
+├── app.py                  # Entry point
+├── main_window.py          # UI components and event handlers
+├── symlink_manager.py      # Core symlink creation/removal logic
+├── settings_manager.py     # Settings, history, and symlink tracking persistence
+├── drag_drop_widgets.py   # Drag-and-drop enabled QLineEdit
+├── ui_styles.py            # Dark and light theme stylesheets
+├── build_executable.py     # Cross-platform PyInstaller build script
+├── symlink_app.spec        # PyInstaller specification
+├── build.sh / build.bat    # Convenience build scripts
+├── requirements.txt        # Python dependencies
+├── README.md               # This file
+├── BUILD_GUIDE.md          # Build and distribution instructions
+├── RELEASE_NOTES.md        # Version history and changelog
+└── SYMLINK_MANAGEMENT.md   # Symlink tracking reference
 ```
-
-## License
-
-This project is provided as-is for personal and commercial use.
-
-## Support
-
-For issues or questions:
-1. Check the Troubleshooting section
-2. Review the application's status bar for error messages
-3. Check the configuration directory for log files
-
-## Contributing
-
-Feel free to submit pull requests or suggestions for improvements!
-
-## Version History
-
-### v1.0.0 (Initial Release)
-- Cross-platform symlink creation
-- Modern GUI with dark/light themes
-- History and statistics tracking
-- Settings persistence
-- Full path validation
-- Platform-specific optimizations
