@@ -626,9 +626,16 @@ class SymlinkMainWindow(QMainWindow):
         theme_layout.addWidget(theme_label)
         
         self.theme_combo = QComboBox()
-        self.theme_combo.addItems(['Dark', 'Light'])
+        self.theme_combo.addItems(['Dark', 'Light', 'Monokai', 'Pastel Pink'])
         current_theme = self.settings_manager.get_setting('theme', 'dark')
-        self.theme_combo.setCurrentText(current_theme.capitalize())
+        # Map internal theme names to display names
+        theme_display_map = {
+            'dark': 'Dark',
+            'light': 'Light',
+            'monokai': 'Monokai',
+            'pastel_pink': 'Pastel Pink',
+        }
+        self.theme_combo.setCurrentText(theme_display_map.get(current_theme, 'Dark'))
         self.theme_combo.currentTextChanged.connect(self.change_theme)
         self.theme_combo.setMinimumWidth(100)
         self.theme_combo.setMaximumWidth(150)
@@ -827,7 +834,14 @@ class SymlinkMainWindow(QMainWindow):
     
     def change_theme(self, theme_name: str):
         """Change the application theme."""
-        theme = theme_name.lower()
+        # Map display names to internal theme keys
+        theme_map = {
+            'Dark': 'dark',
+            'Light': 'light',
+            'Monokai': 'monokai',
+            'Pastel Pink': 'pastel_pink',
+        }
+        theme = theme_map.get(theme_name, 'dark')
         self.settings_manager.set_setting('theme', theme)
         self.setStyleSheet(get_theme_stylesheet(theme))
     

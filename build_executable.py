@@ -26,46 +26,132 @@ def get_platform():
 
 
 def convert_png_to_ico(png_path="symlink_manager_icon.png", ico_path="symlink_manager_icon.ico"):
-    """Convert the PNG icon to .ico format for Windows executables using Pillow."""
+    """Convert the PNG icon to .ico format with proper BMP DIB encoding for Windows.
+
+    Unlike Pillow's built-in ICO saving (which uses PNG compression for larger sizes
+    and looks blurry/pixelated on Windows), this manually constructs the ICO with
+    32-bit BGRA BMP DIB entries + 1-bit AND masks for every size. This is the format
+    Windows Explorer renders best.
+    """
     try:
         from PIL import Image
-        img = Image.open(png_path)
+        import struct
 
-        # Convert to RGBA if not already in that mode
+        img = Image.open(png_path)
         if img.mode != 'RGBA':
             img = img.convert('RGBA')
 
-        # Get original dimensions
         orig_w, orig_h = img.size
         print(f"ℹ️  Original icon size: {orig_w}x{orig_h}")
 
-        # Only include sizes that are ≤ original (never upscale)
-        all_sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+        # Standard Windows icon sizes — include all that fit within the original
+        all_sizes = [
+            (16, 16), (24, 24), (32, 32), (48, 48),
+            (64, 64), (96, 96), (128, 128), (256, 256),
+        ]
         icon_sizes = [(w, h) for w, h in all_sizes if w <= orig_w and h <= orig_h]
 
         if not icon_sizes:
-            # If even 16x16 is larger, just use the original
             icon_sizes = [(orig_w, orig_h)]
 
-        # If original size matches one of the targets perfectly, use it directly
-        # Otherwise downscale with high-quality resampling
-        resized_images = []
+        # Downscale with high-quality Lanczos resampling
+        images = []
         for size in icon_sizes:
             if size == (orig_w, orig_h):
-                resized_images.append(img.copy())
+                images.append(img.copy())
             else:
-                resized = img.resize(size, Image.LANCZOS)
-                resized_images.append(resized)
+                images.append(img.resize(size, Image.LANCZOS))
 
-        # Save using the first image with the rest appended
-        resized_images[0].save(
-            ico_path,
-            format="ICO",
-            sizes=icon_sizes,
-            append_images=resized_images[1:],
-        )
-        print(f"✅ Converted {png_path} -> {ico_path} ({len(icon_sizes)} sizes: {icon_sizes})")
+        # ----------------------------------------------------------------
+        # Build the ICO file manually — every entry is BMP DIB (not PNG)
+        # ----------------------------------------------------------------
+        dir_entries = []
+
+        for pil_img in images:
+            w, h = pil_img.size
+            pixels = list(pil_img.getdata())
+
+            # --- XOR mask: 32-bit BGRA pixels, stored bottom-up ---
+            xor_row_size = w * 4  # 4 bytes per pixel, already 4-byte aligned
+            xor_mask = b''
+            for y in range(h - 1, -1, -1):
+                row = b''
+                for x in range(w):
+                    r, g, b, a = pixels[y * w + x]
+                    row += struct.pack('BBBB', b, g, r, a)  # Windows: BGRA order
+                xor_mask += row
+
+            # --- AND mask: 1-bit transparency mask, stored bottom-up ---
+            #    Bit = 0 → draw pixel (use XOR data)
+            #    Bit = 1 → transparent
+            #    First pixel → MSB of first byte
+            and_row_bytes = (w + 7) // 8
+            and_row_padded = ((w + 31) // 32) * 4  # padded to DWORD boundary
+            and_mask = b''
+            for y in range(h - 1, -1, -1):
+                raw_row = b''
+                for x in range(w):
+                    _, _, _, a = pixels[y * w + x]
+                    if x % 8 == 0:
+                        byte_val = 0
+                    if a < 128:  # treat as transparent
+                        byte_val |= (1 << (7 - (x % 8)))
+                    if x % 8 == 7 or x == w - 1:
+                        raw_row += bytes([byte_val])
+                # Pad row to 4-byte boundary
+                raw_row += b'\x00' * (and_row_padded - len(raw_row))
+                and_mask += raw_row
+
+            # --- BITMAPINFOHEADER (40 bytes) ---
+            image_data_size = xor_row_size * h + and_row_padded * h
+            bih = struct.pack('<IiiHHIIiiII',
+                40,                 # biSize
+                w,                  # biWidth
+                h * 2,              # biHeight = 2×h (XOR mask + AND mask combined)
+                1,                  # biPlanes
+                32,                 # biBitCount
+                0,                  # biCompression (BI_RGB)
+                image_data_size,    # biSizeImage
+                0, 0, 0, 0,         # biXPelsPerMeter, biYPelsPerMeter, biClrUsed, biClrImportant
+            )
+
+            bmp_data = bih + xor_mask + and_mask
+            dir_entries.append({
+                'width': w if w < 256 else 0,   # 0 in the directory means 256
+                'height': h if h < 256 else 0,
+                'data': bmp_data,
+            })
+
+        # --- ICO file header (6 bytes) ---
+        count = len(dir_entries)
+        ico_data = struct.pack('<HHH', 0, 1, count)  # reserved, type=1 (icon), count
+
+        # --- Directory entries (16 bytes each) ---
+        offset = 6 + 16 * count
+        for entry in dir_entries:
+            data = entry['data']
+            ico_data += struct.pack('<BBBBHHII',
+                entry['width'],     # width (0 = 256)
+                entry['height'],    # height (0 = 256)
+                0,                  # colors in palette (0 = no palette)
+                0,                  # reserved
+                1,                  # color planes
+                32,                 # bits per pixel
+                len(data),          # bytes in this entry's data
+                offset,             # offset from start of file
+            )
+            offset += len(data)
+
+        # --- Image data blocks ---
+        for entry in dir_entries:
+            ico_data += entry['data']
+
+        with open(ico_path, 'wb') as f:
+            f.write(ico_data)
+
+        print(f"✅ Converted {png_path} -> {ico_path} ({count} BMP DIB sizes: {icon_sizes})")
         return True
+
     except ImportError:
         print("⚠️ Pillow not installed. Install it with: pip install Pillow")
         return False
