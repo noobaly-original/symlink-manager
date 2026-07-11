@@ -107,19 +107,18 @@ class TrayIcon(QObject):
         - Single-click on Windows/Linux toggles the window
         - Right-click shows the context menu automatically
         """
-        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
-            # Double-click always opens the app
-            self._ensure_window_visible()
-        elif reason == QSystemTrayIcon.ActivationReason.Trigger:
-            # Single click behavior varies by platform
-            if platform.system() == "Darwin":
-                # On macOS, single click typically opens the menu
+        try:
+            if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+                self._ensure_window_visible()
+            elif reason == QSystemTrayIcon.ActivationReason.Trigger:
+                if platform.system() == "Darwin":
+                    pass
+                else:
+                    self._toggle_window()
+            elif reason == QSystemTrayIcon.ActivationReason.Context:
                 pass
-            else:
-                # On Windows/Linux, single click toggles window
-                self._toggle_window()
-        elif reason == QSystemTrayIcon.ActivationReason.Context:
-            # Context menu is shown automatically by the OS
+        except TypeError:
+            # Ignore signal errors during shutdown (C++ enum conversion failure)
             pass
 
     def _ensure_window_visible(self):
@@ -144,6 +143,17 @@ class TrayIcon(QObject):
     def _on_quit(self):
         """Handle quit/close action from menu."""
         self.quit_requested.emit()
+
+    def cleanup(self):
+        """Disconnect signals and hide the tray icon before shutdown."""
+        if self.tray_icon:
+            try:
+                self.tray_icon.activated.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            self.tray_icon.hide()
+            self.tray_icon.deleteLater()
+            self._is_visible = False
 
     def show_message(self, title: str, message: str, icon=None, duration: int = 5000):
         """

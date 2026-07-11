@@ -1,4 +1,4 @@
-# Release Notes — Symlink Manager v1.1.1
+# Release Notes — Symlink Manager v1.1.2
 
 **Release date:** July 12, 2026
 
@@ -6,7 +6,7 @@
 
 ## Overview
 
-Symlink Manager v1.1.1 brings a completely redesigned user interface with a custom frameless window, cross-platform autostart support, and the new Pastel Pink theme. The system tray has been overhauled for reliability and simplicity.
+Symlink Manager v1.1.2 is a stability release that fixes a shutdown crash related to the system tray icon and ensures the application exits properly when "Minimize to tray" is disabled.
 
 ---
 
@@ -46,6 +46,8 @@ Symlink Manager v1.1.1 brings a completely redesigned user interface with a cust
 - Cross-platform tray icon with simplified "Open" and "Close" menu
 - Double-click tray icon to restore the main window
 - Fixes crash on right-click menu
+- Fixes `TypeError` on shutdown related to `ActivationReason` enum conversion
+- Proper cleanup of tray icon signals during application exit
 
 ### Autostart
 - **Start on system login** option in Settings
@@ -66,6 +68,13 @@ Symlink Manager v1.1.1 brings a completely redesigned user interface with a cust
 ---
 
 ## Changelog
+
+### v1.1.2 (July 12, 2026)
+- **Bug fix:** Fixed `TypeError: unable to convert a C++ 'QSystemTrayIcon::ActivationReason' instance to a Python object` on shutdown
+- **Bug fix:** Application now fully exits when "Minimize to system tray" is disabled (was remaining as a background process)
+- Added `cleanup()` method to `TrayIcon` for safe signal disconnection before quit
+- Added safety guard in `_on_tray_activated` to silently ignore signal errors during shutdown
+- Updated version to 1.1.2
 
 ### v1.1.1 (July 12, 2026)
 - **Custom frameless window** — replaced native OS title bar with a custom, theme-aware title bar
