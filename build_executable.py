@@ -25,6 +25,23 @@ def get_platform():
         return "unknown"
 
 
+def convert_png_to_ico(png_path="symlink_manager_icon.png", ico_path="symlink_manager_icon.ico"):
+    """Convert the PNG icon to .ico format for Windows executables using Pillow."""
+    try:
+        from PIL import Image
+        img = Image.open(png_path)
+        # Save as .ico with multiple sizes for better quality
+        img.save(ico_path, format="ICO", sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+        print(f"✅ Converted {png_path} -> {ico_path}")
+        return True
+    except ImportError:
+        print("⚠️ Pillow not installed. Install it with: pip install Pillow")
+        return False
+    except Exception as e:
+        print(f"❌ Failed to convert icon: {e}")
+        return False
+
+
 def clean_build_dirs():
     """Remove previous build artifacts."""
     dirs_to_remove = ["build", "dist", "__pycache__", "*.egg-info"]
@@ -75,6 +92,10 @@ def build_macos():
 def build_windows():
     """Build Windows executable."""
     print("🪟 Building Windows executable...")
+    
+    # Convert PNG to ICO for Windows executable icon
+    if not convert_png_to_ico():
+        print("⚠️ Continuing without .ico conversion...")
     
     cmd = [
         ".venv\\Scripts\\pyinstaller.exe",

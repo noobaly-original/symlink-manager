@@ -15,7 +15,6 @@ env/
 venv/
 ENV/
 *.log
-.venv/
 
 # IDE and Editor
 .vscode/
@@ -28,6 +27,9 @@ ENV/
 # PyInstaller
 *.manifest
 *.spec.bak
+
+# Generated build artifacts
+symlink_manager_icon.ico
 *.spec.old
 
 # Application data

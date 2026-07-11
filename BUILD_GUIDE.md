@@ -135,12 +135,16 @@ codesign -s - dist/SymlinkManager.app
 .venv\Scripts\python.exe build_executable.py
 ```
 
-### Build is too large
+### Windows: "icon must be .ico format" error
 
-**Solution:** The executable includes all Python libraries. To reduce size:
-- Remove unused modules from hidden imports
-- Use `--strip` option in PyInstaller
-- Consider using `--onefile` for single executable file
+**Solution:** The build process now automatically converts the PNG icon to ICO format for Windows builds. If you encounter this error manually, ensure you're using the updated build scripts.
+
+### Windows: "The specified procedure could not be found" error
+
+**Solution:** This error occurs due to a PyQt6 version mismatch. The application now uses PyQt6==6.11.0 which matches the Qt DLLs. If you still encounter this error:
+1. Ensure you're using Python 3.10
+2. Make sure your requirements.txt has `PyQt6==6.11.0` and `PyQt6-Qt6==6.11.1`
+3. If the error persists, you may need to manually add `python3.dll` or other .dll files like vcruntime from a working Python installation to your virtual environment's `Scripts` folder
 
 ## Distribution
 
@@ -201,6 +205,12 @@ Update version in multiple places:
 1. `app.py` - `setApplicationVersion("1.0.0")`
 2. This guide - Update version numbers mentioned
 3. `README.md` - Update version information
+
+### Windows Build Fixes
+
+The Windows build has been updated to address the following issues:
+- **Icon Format**: PyInstaller now automatically converts PNG to ICO format for Windows executables
+- **PyQt6 Version Mismatch**: Fixed "The specified procedure could not be found" error by using PyQt6==6.11.0 with PyQt6-Qt6==6.11.1
 
 ## Support
 

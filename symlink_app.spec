@@ -35,7 +35,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='symlink_manager_icon.png',
+    icon='symlink_manager_icon.ico',
 )
 
 # macOS specific

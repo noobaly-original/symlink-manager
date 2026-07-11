@@ -159,6 +159,7 @@ See [BUILD_GUIDE.md](BUILD_GUIDE.md) for detailed build instructions.
 - The `/D` flag is used for directory junctions
 - Use the "Administrator Privileges" option if standard creation fails
 - Windows 10+ recommended for best symlink support
+- **Build Notes**: The Windows build now automatically handles icon conversion from PNG to ICO format and uses compatible PyQt6 versions (6.11.0) to prevent "The specified procedure could not be found" errors
 
 ### macOS
 - Full symlink support without special privileges
@@ -203,6 +204,11 @@ You can manually edit these JSON files, but changes made while the app is runnin
 - Try enabling "Administrator Privileges" option
 - Run the application as Administrator
 - Some system directories require elevation
+
+### "The specified procedure could not be found" (Windows)
+- This error is typically caused by a PyQt6 version mismatch
+- Ensure you're using Python 3.10 with PyQt6==6.11.0 and PyQt6-Qt6==6.11.1
+- If the error persists, you may need to manually add `python3.dll` from a working Python installation to your virtual environment's `Scripts` folder
 
 ## Command Line Usage
 
