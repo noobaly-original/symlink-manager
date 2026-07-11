@@ -7,6 +7,48 @@ DARK_THEME = """
 QMainWindow {
     background-color: #1e1e2e;
     color: #cdd6f4;
+    border: 1px solid #45475a;
+}
+
+#framelessWindow {
+    background-color: #1e1e2e;
+}
+
+#titleBar {
+    background-color: #1e1e2e;
+}
+
+#titleLabel {
+    color: #cdd6f4;
+}
+
+#minimizeButton, #maximizeButton {
+    background-color: transparent;
+    color: #cdd6f4;
+    border: none;
+    border-radius: 0px;
+    font-size: 12pt;
+    font-weight: normal;
+    padding: 0px;
+}
+
+#minimizeButton:hover, #maximizeButton:hover {
+    background-color: #45475a;
+}
+
+#closeButton {
+    background-color: transparent;
+    color: #cdd6f4;
+    border: none;
+    border-radius: 0px;
+    font-size: 10pt;
+    font-weight: normal;
+    padding: 0px;
+}
+
+#closeButton:hover {
+    background-color: #e64553;
+    color: #ffffff;
 }
 
 QWidget {
@@ -263,6 +305,48 @@ LIGHT_THEME = """
 QMainWindow {
     background-color: #f5f5f5;
     color: #333333;
+    border: 1px solid #d0d0d0;
+}
+
+#framelessWindow {
+    background-color: #f5f5f5;
+}
+
+#titleBar {
+    background-color: #f5f5f5;
+}
+
+#titleLabel {
+    color: #333333;
+}
+
+#minimizeButton, #maximizeButton {
+    background-color: transparent;
+    color: #333333;
+    border: none;
+    border-radius: 0px;
+    font-size: 12pt;
+    font-weight: normal;
+    padding: 0px;
+}
+
+#minimizeButton:hover, #maximizeButton:hover {
+    background-color: #d0d0d0;
+}
+
+#closeButton {
+    background-color: transparent;
+    color: #333333;
+    border: none;
+    border-radius: 0px;
+    font-size: 10pt;
+    font-weight: normal;
+    padding: 0px;
+}
+
+#closeButton:hover {
+    background-color: #e64553;
+    color: #ffffff;
 }
 
 QWidget {
@@ -519,6 +603,48 @@ MONOKAI_THEME = """
 QMainWindow {
     background-color: #272822;
     color: #f8f8f2;
+    border: 1px solid #49483e;
+}
+
+#framelessWindow {
+    background-color: #272822;
+}
+
+#titleBar {
+    background-color: #272822;
+}
+
+#titleLabel {
+    color: #f8f8f2;
+}
+
+#minimizeButton, #maximizeButton {
+    background-color: transparent;
+    color: #f8f8f2;
+    border: none;
+    border-radius: 0px;
+    font-size: 12pt;
+    font-weight: normal;
+    padding: 0px;
+}
+
+#minimizeButton:hover, #maximizeButton:hover {
+    background-color: #49483e;
+}
+
+#closeButton {
+    background-color: transparent;
+    color: #f8f8f2;
+    border: none;
+    border-radius: 0px;
+    font-size: 10pt;
+    font-weight: normal;
+    padding: 0px;
+}
+
+#closeButton:hover {
+    background-color: #f92672;
+    color: #ffffff;
 }
 
 QWidget {
@@ -776,6 +902,48 @@ PASTEL_PINK_THEME = """
 QMainWindow {
     background-color: #fff0f5;
     color: #5c4a5a;
+    border: 1px solid #f5c6d0;
+}
+
+#framelessWindow {
+    background-color: #fff0f5;
+}
+
+#titleBar {
+    background-color: #fff0f5;
+}
+
+#titleLabel {
+    color: #5c4a5a;
+}
+
+#minimizeButton, #maximizeButton {
+    background-color: transparent;
+    color: #5c4a5a;
+    border: none;
+    border-radius: 0px;
+    font-size: 12pt;
+    font-weight: normal;
+    padding: 0px;
+}
+
+#minimizeButton:hover, #maximizeButton:hover {
+    background-color: #f5c6d0;
+}
+
+#closeButton {
+    background-color: transparent;
+    color: #5c4a5a;
+    border: none;
+    border-radius: 0px;
+    font-size: 10pt;
+    font-weight: normal;
+    padding: 0px;
+}
+
+#closeButton:hover {
+    background-color: #e64553;
+    color: #ffffff;
 }
 
 QWidget {

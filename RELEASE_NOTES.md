@@ -1,12 +1,12 @@
-# Release Notes — Symlink Manager v1.0.0
+# Release Notes — Symlink Manager v1.1.1
 
-**Release date:** July 4, 2026
+**Release date:** July 12, 2026
 
 ---
 
 ## Overview
 
-Symlink Manager v1.0.0 is the initial release of a cross-platform GUI application for creating and managing symbolic links. Built with PyQt6, it provides a modern interface for symlink operations on Windows, macOS, and Linux.
+Symlink Manager v1.1.1 brings a completely redesigned user interface with a custom frameless window, cross-platform autostart support, and the new Pastel Pink theme. The system tray has been overhauled for reliability and simplicity.
 
 ---
 
@@ -34,9 +34,26 @@ Symlink Manager v1.0.0 is the initial release of a cross-platform GUI applicatio
 - Persistent storage across sessions
 
 ### User Interface
-- Dark and light themes
+- **Custom frameless window** — native OS title bar replaced with a modern, theme-aware custom title bar with minimize, maximize/restore, and close buttons
+- **Drag to move** — click and drag the title bar to move the window; drag out of maximized state to restore and reposition
+- **Edge resize** — 6px invisible resize border on all edges and corners
+- **Pastel Pink theme** — new light theme with soft pink tones
+- Dark, Light, Monokai, and Pastel Pink themes
 - Window size and position memory
 - Drag-and-drop support for both source and target fields
+
+### System Tray
+- Cross-platform tray icon with simplified "Open" and "Close" menu
+- Double-click tray icon to restore the main window
+- Fixes crash on right-click menu
+
+### Autostart
+- **Start on system login** option in Settings
+- Cross-platform implementation:
+  - Windows: `.lnk` shortcut in Startup folder
+  - macOS: `.plist` LaunchAgent loaded via `launchctl`
+  - Linux: `.desktop` file in `~/.config/autostart/`
+- When launched via autostart, the app starts **minimized to tray** with a notification
 
 ---
 
@@ -49,6 +66,33 @@ Symlink Manager v1.0.0 is the initial release of a cross-platform GUI applicatio
 ---
 
 ## Changelog
+
+### v1.1.1 (July 12, 2026)
+- **Custom frameless window** — replaced native OS title bar with a custom, theme-aware title bar
+  - Draggable with mouse (click-and-drag, drag-out-of-maximize)
+  - Minimize, maximize/restore, and close buttons
+  - Double-click title bar to toggle maximize
+  - Edge resize (6px border on all sides)
+- **New Pastel Pink theme** — soft pink color scheme
+- **Start on system login** — cross-platform autostart registration
+  - New `startup_manager.py` module for Windows/macOS/Linux
+  - Starts minimized to tray when launched via autostart
+- **System tray overhaul** — fixed right-click crash, simplified to "Open" and "Close" menu options
+  - Double-click tray icon restores the window
+- **New `title_bar.py`** module for custom frameless window
+- Updated `app.py` for minimized-to-tray startup
+- Updated `settings_manager.py` with `start_on_login` and `minimize_to_tray` defaults
+- Updated `ui_styles.py` with title bar styling for all themes
+- Updated `main_window.py` with frameless mode, edge resize, and title bar wiring
+
+### v1.1.0 (July 12, 2026)
+- Added cross-platform system tray icon with platform-specific behaviors
+- Minimize to system tray on close (configurable in Settings)
+- Tray icon context menu: Open and Close
+- Notification balloon when minimized to tray
+- New `tray_icon.py` module for tray icon management
+- Updated `app.py` with `setQuitOnLastWindowClosed(False)` for tray support
+- Settings tab now includes System Tray configuration section
 
 ### v1.0.1 (July 11, 2026)
 - Fixed an issue that caused the pyinstaller to fail on Windows. Build script now creates .ico file on the go.
@@ -74,7 +118,10 @@ symlink-manager/
 ├── main_window.py          # UI components and event handlers
 ├── symlink_manager.py      # Core symlink creation/removal logic
 ├── settings_manager.py     # Settings, history, and symlink tracking
-├── drag_drop_widgets.py   # Drag-and-drop QLineEdit widget
+├── drag_drop_widgets.py    # Drag-and-drop QLineEdit widget
+├── tray_icon.py            # System tray icon implementation
+├── title_bar.py            # Custom frameless title bar widget
+├── startup_manager.py      # Cross-platform autostart registration
 ├── ui_styles.py            # Theme stylesheets
 ├── build_executable.py     # PyInstaller build automation
 ├── symlink_app.spec        # PyInstaller specification
@@ -99,7 +146,7 @@ Settings and data are stored as JSON in:
 
 | File | Purpose |
 |---|---|
-| `settings.json` | Window geometry, theme, last-used directories |
+| `settings.json` | Window geometry, theme, last-used directories, minimize-to-tray, autostart |
 | `history.json` | Creation records and recently used paths |
 | `managed_symlinks.json` | Tracked symlinks with notes |
 

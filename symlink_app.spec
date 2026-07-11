@@ -6,7 +6,12 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[('symlink_manager_icon.png', '.')],
-    hiddenimports=['PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets'],
+    hiddenimports=[
+        'PyQt6.QtCore',
+        'PyQt6.QtGui',
+        'PyQt6.QtWidgets',
+        'tray_icon',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -8,11 +8,14 @@ A modern, cross-platform GUI application for creating and managing symbolic link
 
 ### Core
 - 🔗 **Create Symlinks** — File and directory symlinks on any supported OS
-- 🎨 **Modern GUI** — Dark/light themes with drag-and-drop path input
+- 🎨 **Modern GUI** — Dark/light/monokai and pastel pink themes with drag-and-drop path input
+- 🖼️ **Custom Frameless Window** — Beautiful custom title bar with minimize, maximize, and close buttons; draggable and theme-aware
 - 🛡️ **Path Validation** — Validates paths before creating symlinks
 - 🔒 **Admin Mode** (Windows) — Create symlinks in system-protected directories
 - 📋 **Symlink Tracking** — Automatically track, annotate, verify, and delete symlinks
 - 📊 **History & Statistics** — View creation history and most-used paths
+- 🖥️ **System Tray** — Minimize to tray, right-click menu with Open/Close, double-click to restore
+- 🚀 **Autostart** — Option to launch on system login (starts minimized to tray)
 
 ### Options
 | Option | Description |
@@ -91,8 +94,30 @@ The **History** tab shows:
 ### Settings
 
 The **Settings** tab lets you:
-- Switch between **Dark** and **Light** themes
+- Switch between **Dark**, **Light**, **Monokai**, and **Pastel Pink** themes
+- Toggle **Minimize to system tray on close** — closing the window minimizes to tray instead of quitting
+- Toggle **Start on system login (minimized to tray)** — register the app to launch automatically when you log in
 - View platform and Python version info
+
+### System Tray
+
+When enabled, the application minimizes to the system tray instead of quitting:
+- **Windows/Linux:** Left-click or double-click toggles window visibility, right-click opens the context menu
+- **macOS:** Context menu opens on click, double-click toggles window visibility
+- The tray icon menu provides **Open** and **Close** options
+- A notification balloon appears when the application is minimized to tray
+
+### Autostart
+
+The **Start on system login** option registers the application to launch automatically when you log in:
+
+| Platform | Mechanism |
+|---|---|
+| **Windows** | `.lnk` shortcut in `%APPDATA%\...\Startup` |
+| **macOS** | `.plist` LaunchAgent in `~/Library/LaunchAgents/` |
+| **Linux** | `.desktop` file in `~/.config/autostart/` |
+
+When launched via autostart, the window starts **minimized to the system tray** so it doesn't interrupt your workflow.
 
 ---
 
@@ -107,7 +132,7 @@ All data is stored as JSON in a platform-specific directory:
 
 | File | Contents |
 |---|---|
-| `settings.json` | Window geometry, theme preference, last-used directories |
+| `settings.json` | Window geometry, theme preference, last-used directories, minimize-to-tray, autostart |
 | `history.json` | Creation records (last 200), recently used source/target paths |
 | `managed_symlinks.json` | Tracked symlinks with notes and status |
 
@@ -122,15 +147,18 @@ All data is stored as JSON in a platform-specific directory:
 - Uses the `mklink` command internally; `/D` flag for directory junctions.
 - Windows 10+ recommended for best symlink support.
 - The build process auto-converts PNG icons to ICO format.
+- Autostart uses a VBScript-generated `.lnk` shortcut (no extra dependencies).
 
 ### macOS
 - Full symlink support without special privileges.
 - Relative symlinks work across mounted drives.
 - Symlinks appear as aliases in Finder.
+- Autostart uses a `launchctl`-loaded `.plist` agent.
 
 ### Linux
 - Full symlink support (ext4, Btrfs, XFS, etc.).
 - No special privileges required for standard directories.
+- Autostart uses a freedesktop `.desktop` file in `~/.config/autostart/`.
 
 ---
 
@@ -143,6 +171,7 @@ All data is stored as JSON in a platform-specific directory:
 | **"No write permission"** (Linux/macOS) | Check write permissions on the target directory (`chmod` if needed). |
 | **App won't start** | Run from a terminal to see error messages. Ensure Python 3.8+ and all dependencies are installed. |
 | **Drag & drop not working** | Your file manager must support standard MIME types. Works on Windows 7+, macOS 10.13+, and modern Linux desktops. |
+| **Autostart not working** | Try running the app as administrator (Windows) or check the autostart directory permissions (macOS/Linux). |
 
 ---
 
@@ -154,8 +183,11 @@ symlink-manager/
 ├── main_window.py          # UI components and event handlers
 ├── symlink_manager.py      # Core symlink creation/removal logic
 ├── settings_manager.py     # Settings, history, and symlink tracking persistence
-├── drag_drop_widgets.py   # Drag-and-drop enabled QLineEdit
-├── ui_styles.py            # Dark and light theme stylesheets
+├── drag_drop_widgets.py    # Drag-and-drop enabled QLineEdit
+├── tray_icon.py            # System tray icon implementation
+├── title_bar.py            # Custom frameless title bar widget
+├── startup_manager.py      # Cross-platform autostart registration
+├── ui_styles.py            # Dark, light, and custom theme stylesheets
 ├── build_executable.py     # Cross-platform PyInstaller build script
 ├── symlink_app.spec        # PyInstaller specification
 ├── build.sh / build.bat    # Convenience build scripts

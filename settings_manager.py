@@ -57,6 +57,8 @@ class SettingsManager:
             'show_source_content': False,
             'last_source_dir': str(Path.home()),
             'last_target_dir': str(Path.home()),
+            'minimize_to_tray': True,
+            'start_on_login': False,
         }
     
     def _load_history(self) -> Dict[str, List[str]]:

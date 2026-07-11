@@ -10,7 +10,8 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QLabel, QLineEdit, QPushButton, QCheckBox, QFileDialog, QMessageBox,
     QTabWidget, QListWidget, QListWidgetItem, QComboBox, QTableWidget,
-    QTableWidgetItem, QDialog, QScrollArea, QFormLayout, QStatusBar, QMenu, QApplication
+    QTableWidgetItem, QDialog, QScrollArea, QFormLayout, QStatusBar, QMenu,
+    QApplication
 )
 from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSignal, QMimeData
 from PyQt6.QtGui import QIcon, QFont, QColor
@@ -21,6 +22,9 @@ from symlink_manager import SymlinkManager
 from settings_manager import SettingsManager
 from ui_styles import get_theme_stylesheet
 from drag_drop_widgets import DragDropLineEdit
+from tray_icon import TrayIcon
+from startup_manager import StartupManager
+from title_bar import TitleBar
 
 
 class CreationWorker:
@@ -43,13 +47,20 @@ class CreationWorker:
 
 class SymlinkMainWindow(QMainWindow):
     """Main application window."""
-    
+
+    # Edge resize margin in pixels
+    RESIZE_MARGIN = 6
+
     def __init__(self):
         """Initialize the main window."""
         super().__init__()
         
         self.settings_manager = SettingsManager()
         self.symlink_manager = SymlinkManager()
+        self._is_resizing = False
+        self._resize_edge = 0
+        self._drag_start_pos = None
+        self._drag_start_geo = None
         
         self.initUI()
         self.load_settings()
@@ -60,23 +71,47 @@ class SymlinkMainWindow(QMainWindow):
         self.setMinimumSize(600, 400)
         self.resize(650, 420)
         
+        # Remove the native window frame (cross-platform)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        
+        # Enable mouse tracking for resize cursor changes
+        self.setMouseTracking(True)
+        
         # Set application icon
         icon_path = Path(__file__).parent / 'symlink_manager_icon.png'
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
         
-        # Create central widget and main layout
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(12, 12, 12, 12)
-        main_layout.setSpacing(10)
-        central_widget.setLayout(main_layout)
+        # --- Build the frameless layout ---
+        # Outer container with zero margins — title bar sits at top
+        self._outer_widget = QWidget()
+        self._outer_widget.setObjectName("framelessWindow")
+        self.setCentralWidget(self._outer_widget)
+        outer_layout = QVBoxLayout()
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(2)
+        self._outer_widget.setLayout(outer_layout)
+        
+        # Custom title bar
+        self.title_bar = TitleBar(self._outer_widget)
+        self.title_bar.set_title("Symlink Manager")
+        if icon_path.exists():
+            self.title_bar.set_window_icon(QIcon(str(icon_path)))
+        outer_layout.addWidget(self.title_bar)
+        
+        # Content widget — everything below the title bar
+        content_widget = QWidget()
+        content_widget.setObjectName("windowContent")
+        self._content_layout = QVBoxLayout()
+        self._content_layout.setContentsMargins(12, 10, 12, 12)
+        self._content_layout.setSpacing(10)
+        content_widget.setLayout(self._content_layout)
+        outer_layout.addWidget(content_widget, 1)  # stretch factor 1
         
         # Create tab widget for different sections
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet("QTabBar::tab { padding: 6px 12px; }")
-        main_layout.addWidget(self.tabs)
+        self._content_layout.addWidget(self.tabs)
         
         # Tab 1: Create Symlink
         create_tab = self.create_symlink_tab()
@@ -97,12 +132,190 @@ class SymlinkMainWindow(QMainWindow):
         # Connect tab change signal to refresh manage tab
         self.tabs.currentChanged.connect(self.on_tab_changed)
         
-        # Status bar
+        # Connect title bar signals
+        self.title_bar.minimize_requested.connect(self._on_title_minimize)
+        self.title_bar.maximize_requested.connect(self._on_title_maximize)
+        self.title_bar.close_requested.connect(self._on_title_close)
+        
+        # Status bar (still works in frameless mode)
         self.statusBar().showMessage("Ready")
         
         # Apply theme
         theme = self.settings_manager.get_setting('theme', 'dark')
         self.setStyleSheet(get_theme_stylesheet(theme))
+        
+        # Initialize system tray icon
+        self._setup_tray_icon()
+    
+    def _setup_tray_icon(self):
+        """Set up the system tray icon."""
+        self.tray_icon = TrayIcon(self)
+        
+        if self.tray_icon.is_available:
+            # Connect tray icon signals
+            self.tray_icon.show_window_requested.connect(self.show_window)
+            self.tray_icon.hide_window_requested.connect(self.hide_window)
+            self.tray_icon.quit_requested.connect(self.quit_application)
+            
+            # Load minimize-to-tray preference
+            self.minimize_to_tray = self.settings_manager.get_setting('minimize_to_tray', True)
+    
+    # ---- Title bar handlers ----
+    
+    def _on_title_minimize(self):
+        """Minimize the window."""
+        self.showMinimized()
+    
+    def _on_title_maximize(self):
+        """Toggle maximize/restore."""
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+        self.title_bar.update_maximize_state(self.isMaximized())
+    
+    def _on_title_close(self):
+        """Close the window (respects minimize-to-tray)."""
+        self.close()
+    
+    def changeEvent(self, event):
+        """Sync title bar maximize button when window state changes."""
+        if event.type() == event.Type.WindowStateChange:
+            self.title_bar.update_maximize_state(self.isMaximized())
+        super().changeEvent(event)
+    
+    # ---- Resize from edges (frameless window) ----
+    
+    def _get_resize_edge(self, pos):
+        """Determine which edge (bitmask) the cursor is on."""
+        margin = self.RESIZE_MARGIN
+        x, y = pos.x(), pos.y()
+        w, h = self.width(), self.height()
+        
+        edge = 0
+        if x <= margin:
+            edge |= 1  # left
+        if x >= w - margin:
+            edge |= 2  # right
+        if y <= margin:
+            edge |= 4  # top
+        if y >= h - margin:
+            edge |= 8  # bottom
+        return edge
+    
+    def _resize_cursor_from_edge(self, edge):
+        """Get cursor shape for a given edge bitmask."""
+        if edge in (5, 5+2, 5+8):  # top-left or corners with top+left
+            return Qt.CursorShape.SizeFDiagCursor
+        if edge in (6, 6+1, 6+8):  # top-right
+            return Qt.CursorShape.SizeBDiagCursor
+        if edge in (9, 9+2, 9+4):  # bottom-left
+            return Qt.CursorShape.SizeBDiagCursor
+        if edge in (10, 10+1, 10+4):  # bottom-right
+            return Qt.CursorShape.SizeFDiagCursor
+        if edge & 1 or edge & 2:  # left or right
+            return Qt.CursorShape.SizeHorCursor
+        if edge & 4 or edge & 8:  # top or bottom
+            return Qt.CursorShape.SizeVerCursor
+        return Qt.CursorShape.ArrowCursor
+    
+    def mouseMoveEvent(self, event):
+        """Update cursor for resize edges, or perform resize."""
+        if self._is_resizing:
+            # Perform the actual resize
+            self._do_resize(event.globalPosition().toPoint())
+        elif not self.isMaximized():
+            edge = self._get_resize_edge(event.pos())
+            self.setCursor(self._resize_cursor_from_edge(edge))
+        super().mouseMoveEvent(event)
+    
+    def mousePressEvent(self, event):
+        """Start window resize from edges."""
+        if event.button() == Qt.MouseButton.LeftButton and not self.isMaximized():
+            edge = self._get_resize_edge(event.pos())
+            if edge:
+                self._is_resizing = True
+                self._resize_edge = edge
+                self._drag_start_pos = event.globalPosition().toPoint()
+                self._drag_start_geo = self.geometry()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+    
+    def mouseReleaseEvent(self, event):
+        """End window resize."""
+        self._is_resizing = False
+        self._resize_edge = 0
+        super().mouseReleaseEvent(event)
+    
+    def _do_resize(self, global_pos):
+        """Resize the window based on the active edge(s)."""
+        delta = global_pos - self._drag_start_pos
+        geo = self._drag_start_geo
+        min_w = self.minimumWidth()
+        min_h = self.minimumHeight()
+        
+        new_left = geo.x()
+        new_top = geo.y()
+        new_w = geo.width()
+        new_h = geo.height()
+        
+        edge = self._resize_edge
+        
+        if edge & 1:  # left
+            new_left = geo.x() + delta.x()
+            new_w = geo.width() - delta.x()
+            if new_w < min_w:
+                new_w = min_w
+                new_left = geo.x() + geo.width() - min_w
+        
+        if edge & 2:  # right
+            new_w = geo.width() + delta.x()
+            if new_w < min_w:
+                new_w = min_w
+        
+        if edge & 4:  # top
+            new_top = geo.y() + delta.y()
+            new_h = geo.height() - delta.y()
+            if new_h < min_h:
+                new_h = min_h
+                new_top = geo.y() + geo.height() - min_h
+        
+        if edge & 8:  # bottom
+            new_h = geo.height() + delta.y()
+            if new_h < min_h:
+                new_h = min_h
+        
+        self.setGeometry(new_left, new_top, new_w, new_h)
+    
+    def show_window(self):
+        """Show the main window."""
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.tray_icon.update_window_visibility(True)
+    
+    def hide_window(self):
+        """Hide the main window to system tray."""
+        self.hide()
+        self.tray_icon.update_window_visibility(False)
+    
+    def quit_application(self):
+        """Quit the application from tray."""
+        self.save_window_geometry()
+        QApplication.quit()
+    
+    def focus_create_tab(self):
+        """Switch to the create symlink tab."""
+        self.tabs.setCurrentIndex(0)
+    
+    def save_window_geometry(self):
+        """Save the current window geometry."""
+        geometry = {
+            'width': self.width(),
+            'height': self.height()
+        }
+        self.settings_manager.set_setting('window_geometry', geometry)
     
     def create_symlink_tab(self) -> QWidget:
         """Create the symlink creation tab."""
@@ -123,7 +336,7 @@ class SymlinkMainWindow(QMainWindow):
         source_layout.addWidget(self.source_input)
         
         source_browse_btn = QPushButton("Browse")
-        source_browse_btn.setMaximumWidth(80)
+        source_browse_btn.setMaximumWidth(100)
         source_browse_btn.clicked.connect(self.browse_source)
         source_layout.addWidget(source_browse_btn)
         layout.addLayout(source_layout)
@@ -140,7 +353,7 @@ class SymlinkMainWindow(QMainWindow):
         target_layout.addWidget(self.target_input)
         
         target_browse_btn = QPushButton("Browse")
-        target_browse_btn.setMaximumWidth(80)
+        target_browse_btn.setMaximumWidth(100)
         target_browse_btn.clicked.connect(self.browse_target)
         target_layout.addWidget(target_browse_btn)
         layout.addLayout(target_layout)
@@ -643,6 +856,35 @@ class SymlinkMainWindow(QMainWindow):
         theme_layout.addStretch()
         layout.addLayout(theme_layout)
         
+        # System tray settings
+        tray_group = QGroupBox("System Tray")
+        tray_layout = QVBoxLayout()
+        
+        self.minimize_to_tray_checkbox = QCheckBox("Minimize to system tray on close")
+        self.minimize_to_tray_checkbox.setChecked(
+            self.settings_manager.get_setting('minimize_to_tray', True)
+        )
+        self.minimize_to_tray_checkbox.toggled.connect(self._on_minimize_to_tray_toggled)
+        tray_layout.addWidget(self.minimize_to_tray_checkbox)
+        
+        self.start_on_login_checkbox = QCheckBox("Start on system login (minimized to tray)")
+        self.start_on_login_checkbox.setChecked(
+            self.settings_manager.get_setting('start_on_login', False)
+        )
+        self.start_on_login_checkbox.toggled.connect(self._on_start_on_login_toggled)
+        tray_layout.addWidget(self.start_on_login_checkbox)
+        
+        tray_info = QLabel(
+            "When enabled, closing the window will minimize it to the system tray "
+            "instead of quitting the application. Use the tray icon to show or quit."
+        )
+        tray_info.setWordWrap(True)
+        tray_info.setStyleSheet("font-size: 9pt; color: #888;")
+        tray_layout.addWidget(tray_info)
+        
+        tray_group.setLayout(tray_layout)
+        layout.addWidget(tray_group)
+        
         # Information
         info_text = QLabel()
         info_text.setWordWrap(True)
@@ -657,6 +899,27 @@ class SymlinkMainWindow(QMainWindow):
         layout.addStretch()
         widget.setLayout(layout)
         return widget
+    
+    def _on_minimize_to_tray_toggled(self, checked: bool):
+        """Handle minimize-to-tray checkbox toggle."""
+        self.minimize_to_tray = checked
+        self.settings_manager.set_setting('minimize_to_tray', checked)
+    
+    def _on_start_on_login_toggled(self, checked: bool):
+        """Handle start-on-login checkbox toggle."""
+        success = StartupManager.set_startup_enabled(checked)
+        if success:
+            self.settings_manager.set_setting('start_on_login', checked)
+        else:
+            # Revert the checkbox if the operation failed
+            self.start_on_login_checkbox.blockSignals(True)
+            self.start_on_login_checkbox.setChecked(not checked)
+            self.start_on_login_checkbox.blockSignals(False)
+            QMessageBox.warning(
+                self, "Autostart Error",
+                f"Failed to {'enable' if checked else 'disable'} autostart. "
+                "Try running as administrator or check permissions."
+            )
     
     def browse_source(self):
         """Open file dialog to select source."""
@@ -852,13 +1115,22 @@ class SymlinkMainWindow(QMainWindow):
             self.resize(geometry.get('width', 650), geometry.get('height', 420))
     
     def closeEvent(self, event):
-        """Save settings when closing."""
-        geometry = {
-            'width': self.width(),
-            'height': self.height()
-        }
-        self.settings_manager.set_setting('window_geometry', geometry)
-        event.accept()
+        """Handle window close event."""
+        self.save_window_geometry()
+        
+        # Minimize to tray instead of quitting if enabled and tray is available
+        if self.minimize_to_tray and self.tray_icon.is_available:
+            self.hide_window()
+            self.tray_icon.show_message(
+                "Symlink Manager",
+                "Application minimized to system tray. "
+                "Double-click the tray icon to restore."
+            )
+            event.ignore()
+        else:
+            # Actually quit the application (setQuitOnLastWindowClosed is False)
+            self.quit_application()
+            event.accept()
     
     @staticmethod
     def get_platform_name() -> str:
