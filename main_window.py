@@ -934,7 +934,7 @@ class SymlinkMainWindow(QMainWindow):
         info_text.setWordWrap(True)
         info_text.setStyleSheet("font-size: 10pt; line-height: 1.5;")
         info_text.setText(
-            f"<b>Symlink Manager v2.0.1</b><br>"
+            f"<b>Symlink Manager v2.0.2</b><br>"
             f"<b>Platform:</b> {self.get_platform_name()}<br>"
             f"<b>Python:</b> {sys.version.split()[0]}"
         )
