@@ -3,22 +3,19 @@ Main application window for the Symlink Manager.
 """
 
 import sys
-import os
 import uuid
 import logging
-import shutil
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QLabel, QLineEdit, QPushButton, QCheckBox, QFileDialog, QMessageBox,
-    QTabWidget, QListWidget, QListWidgetItem, QComboBox, QTableWidget,
-    QTableWidgetItem, QDialog, QScrollArea, QFormLayout, QStatusBar, QMenu,
+    QTabWidget, QComboBox, QTableWidget,
+    QTableWidgetItem, QDialog, QStatusBar, QMenu,
     QApplication, QHeaderView, QSpinBox
 )
-from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSignal, QMimeData
-from PyQt6.QtGui import QIcon, QFont, QColor
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QIcon, QFont
 from PyQt6.QtGui import QClipboard
-from PyQt6.QtCore import QThread
 
 from symlink_manager import SymlinkManager
 from settings_manager import SettingsManager
@@ -156,6 +153,7 @@ class SymlinkMainWindow(QMainWindow):
         self._drag_start_geo = None
         self._pending_maximize = False
         self._missing_symlinks_prompted = False
+        self._admin_retry_pending = False
         
         self.initUI()
         self.load_settings()
@@ -1425,7 +1423,7 @@ class SymlinkMainWindow(QMainWindow):
             event.accept()
     
     def _run_persistence_check(self):
-        """Check all tracked symlinks and recreate any that are missing."""
+        """Check all tracked symlinks, run merge on every tick, recreate any that are missing."""
         symlinks = self.settings_manager.get_all_symlinks()
         if not symlinks:
             logging.debug("Persistence check: no tracked symlinks to verify")
@@ -1433,58 +1431,56 @@ class SymlinkMainWindow(QMainWindow):
 
         status = self.settings_manager.verify_symlinks()
         missing = [link for link in status['symlinks'] if link['status'] == 'missing']
+        merge_pairs = self.settings_manager.get_merge_pairs()
 
-        if not missing:
-            logging.debug("Persistence check: all symlinks are present")
-            return
-
-        logging.info(f"Persistence check: {len(missing)} symlink(s) missing — attempting recovery")
-
-        # ---- Phase 1: Merge (per-source, collects batch operations) ----
+        # ---- Phase 1: Merge — runs EVERY tick regardless of missing symlinks ----
         batch_ops = []       # (source, target, is_dir, force, relative, admin)
         merge_tracked = []   # new sub-symlinks to track after batch
         seen_targets = set() # silently ignore duplicate target paths
         needs_admin = False
-        merge_pairs = self.settings_manager.get_merge_pairs()
 
-        for entry in missing:
-            source = entry['source']
-            target = entry['target']
+        if merge_pairs:
+            for link in status['symlinks']:
+                target = link['target']
+                source = link['source']
+                if target in seen_targets:
+                    continue
+                symlink_parent = str(Path(target).parent.resolve())
+                for pair in merge_pairs:
+                    if str(Path(pair['target']).resolve()) == symlink_parent:
+                        merge_ok, merge_msg, new_symlinks = self.symlink_manager.merge_directories(
+                            pair['source'], target
+                        )
+                        if not merge_ok:
+                            logging.warning(f"Persistence recovery: merge failed for '{target}': {merge_msg}")
+                        else:
+                            logging.info(f"Persistence recovery: merge for '{target}': {merge_msg}")
+                            for ns in new_symlinks:
+                                merge_tracked.append(ns)
+                                ns_target = ns['target']
+                                seen_targets.add(ns_target)
+                                batch_ops.append((ns['source'], ns_target,
+                                                  ns.get('is_dir', Path(ns['source']).is_dir()), False, False, False))
+                        break
 
-            # Silently skip if we've already queued this target
-            if target in seen_targets:
-                continue
-            seen_targets.add(target)
-
-            try:
-                source_path = Path(source)
-                # Check if the symlink's parent directory matches any merge pair's target
-                if merge_pairs:
-                    symlink_parent = str(Path(target).parent.resolve())
-                    for pair in merge_pairs:
-                        if str(Path(pair['target']).resolve()) == symlink_parent:
-                            # Run merge using the pair's source as the merge source
-                            merge_ok, merge_msg, new_symlinks = self.symlink_manager.merge_directories(
-                                pair['source'], target
-                            )
-                            if not merge_ok:
-                                logging.warning(f"Persistence recovery: merge failed for '{target}': {merge_msg}")
-                            else:
-                                logging.info(f"Persistence recovery: {merge_msg} for '{target}'")
-                                for ns in new_symlinks:
-                                    merge_tracked.append(ns)
-                                    ns_target = ns['target']
-                                    seen_targets.add(ns_target)
-                                    batch_ops.append((ns['source'], ns_target,
-                                                      ns.get('is_dir', Path(ns['source']).is_dir()), False, False, False))
-                            break
-
-                # Add the main symlink to batch operations
-                is_dir = source_path.is_dir() if source_path.exists() else False
-                batch_ops.append((source, target, is_dir, False, False, False))
-
-            except Exception as e:
-                logging.error(f"Persistence recovery: exception for '{target}': {e}")
+        # ---- Phase 2: Add missing symlinks to batch ----
+        if not missing:
+            logging.debug("Persistence check: all symlinks are present")
+            self._admin_retry_pending = False
+        else:
+            logging.info(f"Persistence check: {len(missing)} symlink(s) missing — attempting recovery")
+            for entry in missing:
+                source = entry['source']
+                target = entry['target']
+                if target in seen_targets:
+                    continue
+                seen_targets.add(target)
+                try:
+                    source_path = Path(source)
+                    is_dir = source_path.is_dir() if source_path.exists() else False
+                    batch_ops.append((source, target, is_dir, False, False, False))
+                except Exception as e:
+                    logging.error(f"Persistence recovery: exception for '{target}': {e}")
 
         if not batch_ops:
             logging.debug("Persistence check: no operations to perform")
@@ -1498,7 +1494,7 @@ class SymlinkMainWindow(QMainWindow):
         recreated = sum(1 for _, _, ok, _ in results if ok)
         failed = sum(1 for _, _, ok, _ in results if not ok)
         if failed:
-            admin_failures = any("ADMIN_REQUIRED" in msg for _, _, _, msg in results if not ok)
+            admin_failures = any("ADMIN_REQUIRED" in msg for s, t, ok, msg in results if not ok)
             if admin_failures and self.symlink_manager.is_windows():
                 needs_admin = True
                 logging.warning(
@@ -1510,14 +1506,27 @@ class SymlinkMainWindow(QMainWindow):
                 logging.warning(f"Persistence recovery: {failed} symlink(s) failed (non-admin errors)")
 
         if needs_admin:
-            self.statusBar().showMessage(
-                f"Persistence: {recreated} recreated, {failed} need admin — retrying with admin in 15s",
-                8000
-            )
-            # Collect only the ops that actually failed
-            failed_ops = [op for op, (_, _, ok, _) in zip(batch_ops, results) if not ok]
-            QTimer.singleShot(15_000, lambda: self._retry_persistence_with_admin(failed_ops))
+            if self._admin_retry_pending:
+                logging.debug("Persistence recovery: admin retry already scheduled — skipping")
+            else:
+                self._admin_retry_pending = True
+                # Notify via desktop notification
+                if self.tray_icon and self.tray_icon.is_available:
+                    self.tray_icon.show_message(
+                        "Symlink Manager — Admin Required",
+                        f"Persistence recreated {recreated} symlink(s), but {failed} require "
+                        f"admin privileges. Retrying with elevated rights in 15 seconds.",
+                        duration=8000
+                    )
+                self.statusBar().showMessage(
+                    f"Persistence: {recreated} recreated, {failed} need admin — retrying with admin in 15s",
+                    8000
+                )
+                # Collect only the ops that actually failed
+                failed_ops = [op for op, (_, _, ok, _) in zip(batch_ops, results) if not ok]
+                QTimer.singleShot(15_000, lambda: self._retry_persistence_with_admin(failed_ops))
         else:
+            self._admin_retry_pending = False
             if recreated:
                 logging.info(f"Persistence recovery: {recreated} symlink(s) recreated via batch")
             if failed:
@@ -1542,9 +1551,12 @@ class SymlinkMainWindow(QMainWindow):
             return
 
         logging.info(f"Persistence retry: attempting {len(failed_ops)} symlink(s) with admin privileges")
+        self._admin_retry_pending = False
         # Rebuild batch ops with admin=True and force=True (since target might exist partially)
-        retry_ops = [(s, t, d, True, r, True) for s, t, d, r, _, _ in
-                     [(*op[:4], op[4] if len(op) > 4 else False) for op in failed_ops]]
+        retry_ops = []
+        for op in failed_ops:
+            s, t, d, _, r, _ = op  # (source, target, is_dir, force, relative, admin)
+            retry_ops.append((s, t, d, True, r, True))
 
         # Notify user
         QMessageBox.information(

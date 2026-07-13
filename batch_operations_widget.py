@@ -3,8 +3,6 @@ Batch operations widget for creating multiple symlinks at once.
 Supports drag-and-drop for source items and target directory.
 """
 
-import os
-import uuid
 from pathlib import Path
 from typing import List, Tuple
 
@@ -13,7 +11,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QCheckBox, QFileDialog, QMessageBox,
     QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem,
     QGroupBox, QHeaderView, QAbstractItemView, QProgressBar,
-    QSplitter, QFrame, QSizePolicy
+    QSplitter
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QColor
