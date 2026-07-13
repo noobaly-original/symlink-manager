@@ -26,7 +26,14 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Updated version to v2.1.0
+- **Merge refactored** — Replaced per-symlink merge checkbox with a **Merge Settings** dialog: users define source → target directory pairs; merge runs on every persistence tick, scanning target folders for files not in source
+- **Timestamp-aware overwrites** — Merge only overwrites source files when the incoming file has a newer modification time; older files are silently skipped
+- **Overwrite confirmation** — Before the merge phase runs, a batch-aware dialog lists all pending overwrites and asks for the user's approval
+- **Persistence improved** — Admin retry flag prevents multiple UAC prompts stacking up; retry only fires once until the batch completes
+- **Merge runs every persistence check** — No longer tied to missing symlinks; merge scans target directories every tick, catching files added by external processes
+- **Cross-platform audit** — Removed unused imports, verified all platform-specific code is properly guarded
 
----
-
-## [2.0.2] — Initial release
+### Fixed
+- Triple UAC prompt issue
+- Missing symlink prompt now shows once per session with a persistence-aware tip
+- Duplicate batch operations from merge sub-symlinks

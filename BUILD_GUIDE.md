@@ -312,4 +312,4 @@ The `build/` directory can be safely deleted. Only `dist/` contains the final ex
 
 ## Version
 
-Current app version: **2.0.2** (defined in `app.py`).
+Current app version: **2.1.0** (defined in `app.py`).

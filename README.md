@@ -16,9 +16,9 @@ A modern, cross-platform GUI application for creating and managing symbolic link
 - 📊 **History & Statistics** — View creation history and most-used paths
 - 🖥️ **System Tray** — Minimize to tray, right-click menu with Open/Close, double-click to restore
 - 🚀 **Autostart** — Option to launch on system login (starts minimized to tray)
-- ♻️ **Symlink Persistence** — Automatically recreate missing symlinks every 60 seconds (optional, configurable in Settings)
-- � **Merge Management** — Before recreating a missing symlink, copy source directory contents into the symlink folder (newer files override)
-- �📦 **Batch Operations** — Create multiple symlinks at once from a CSV or manual list
+- ♻️ **Symlink Persistence** — Automatically recreate missing symlinks at a configurable interval (10–3600s)
+- 🔄 **Merge Management** — Define source → target directory pairs; on each persistence check, scan target folders for files not in source, move them to source, and create symlinks in their place (timestamp-aware overwrites)
+- 📦 **Batch Operations** — Create multiple symlinks at once from a CSV or manual list
 - 🏗️ **PyInstaller Bundle** — Compatible with standalone .exe builds; elevation, autostart, and drag-drop all work in bundled mode
 
 ### Options
@@ -97,13 +97,21 @@ The **History** tab shows:
 
 ### Settings
 
-The **Settings** tab lets you:
-- Switch between **Dark**, **Light**, **Monokai**, **Pastel Pink**, **Pastel Blue**, **Pastel Green**, and **Pastel Orange** themes
-- Toggle **Minimize to system tray on close** — closing the window minimizes to tray instead of quitting
-- Toggle **Start on system login (minimized to tray)** — register the app to launch automatically when you log in
-- Toggle **Persist symlinks** — automatically recreate missing symlinks every 60 seconds (cross-platform)
-- Toggle **Merge management** — merge source directory contents into the symlink's folder before recreating (newer files override)
-- View platform and Python version info
+The **Settings** tab is organized into four groups:
+
+**Appearance** — Switch between 7 themes (Dark, Light, Monokai, Pastel Pink, Pastel Blue, Pastel Green, Pastel Orange).
+
+**System Tray** — Toggle **"Minimize to system tray on close"** and **"Start on system login (minimized to tray)"**.
+
+**Persistence & Merge:**
+- Toggle **"Persist symlinks"** — automatically recreate missing symlinks at the configured interval (default 60s, configurable 10–3600s)
+- Use **"Merge Settings..."** to define source → target directory pairs for merge operations
+- Merge runs every persistence tick, scanning target directories for items not present in the source
+- Files are moved to the source, removed from the target, and replaced with new symlinks
+- Only overwrites source files when the incoming file is newer (timestamp comparison)
+- A batch-aware confirmation dialog appears before any overwrites occur
+
+**About** — Version, platform, and Python version info
 
 ### System Tray
 
@@ -131,10 +139,11 @@ When enabled in **Settings**, the application automatically checks all tracked s
 
 | Feature | Detail |
 |---|---|
-| **Check interval** | Every 60 seconds |
+| **Check interval** | Configurable in Settings (default 60s, range 10–3600s) |
 | **Scope** | All symlinks in the tracked list (created via the app) |
-| **Recreation** | Uses the original source path automatically |
-| **Admin fallback** (Windows) | If a symlink requires admin privileges, the app retries with elevated mode |
+| **Recreation** | Uses the original source path automatically, batches all operations |
+| **Admin fallback** (Windows) | If a symlink requires admin privileges, the app notifies via desktop notification and retries with elevated mode 15 seconds later |
+| **Duplicate detection** | Silently skips duplicate target paths |
 | **Status bar** | Shows a notification when symlinks are recreated |
 | **Logging** | All persistence operations are logged via `logging` (debug, info, warning, error levels) |
 | **Cross-platform** | Works identically on Windows, macOS, and Linux |
@@ -143,19 +152,22 @@ When enabled in **Settings**, the application automatically checks all tracked s
 
 ### Merge Management
 
-When enabled alongside persistence, the **Merge management** option copies the contents of the source directory into the folder that contains the symlink **before** recreating it:
+Merge is configured through the **Merge Settings** dialog in the Settings tab. Users define source → target directory pairs. On every persistence tick, the app scans the target directory for items not present in the source:
 
 | Detail | Description |
 |---|---|
-| **Behavior** | Recursively copies all files and subdirectories from the source into the symlink's parent directory |
-| **Newer files win** | For existing files, the source file only overwrites the destination if its modification time is newer |
-| **Existing files** | Files present in the destination but not in the source are preserved (not deleted) |
-| **Symlink recreation** | After the merge, the old symlink is removed and a fresh symlink is created pointing back to the source |
-| **Safety** | Skips files that are symlinks pointing back to the source to avoid circular copies |
-| **Logging** | Every merge operation is logged (files copied, skipped, errors) |
+| **Behavior** | Scans each configured target directory for files/folders not in the source |
+| **New items** | Moved into the source directory, then replaced with a symlink pointing back to the source |
+| **Overwrite rule** | Only overwrites existing source files when the incoming file has a **newer modification time**; older files are silently skipped |
+| **Confirmation** | Before the merge phase runs, a single batch-aware dialog lists all pending overwrites and asks for approval |
+| **Duplicate protection** | Items resolving to the same path are silently ignored |
+| **Safety** | Items that are already symlinks pointing into the source are skipped<br>The main symlink itself is also skipped |
+| **Same-name protection** | Items whose name matches the source directory are skipped (they belong to the main symlink) |
+| **New symlink tracking** | Sub-symlinks created by merge are automatically added to the Manage tab |
+| **Logging** | Every merge operation is logged (files moved, skipped, errors, overwrites) |
 | **Batch-aware** | All symlink creations during a persistence cycle are batched into a single `run_batch()` call — including sub-symlinks produced by merge operations |
 
-> 💡 Merge management is useful when you want to keep a local copy of the symlinked files in the same folder as the symlink itself. This ensures the data is available even if the symlink's source becomes temporarily unavailable.
+> 💡 Merge management is useful when external processes add files to a symlink's parent directory. The app detects these changes, consolidates them into the source, and creates proper symlinks automatically.
 
 ---
 
