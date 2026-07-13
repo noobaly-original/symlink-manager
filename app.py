@@ -4,14 +4,39 @@ Symlink Manager - Cross-platform GUI application for creating symlinks.
 """
 
 import sys
+import logging
+from pathlib import Path
 from PyQt6.QtWidgets import QApplication
 from main_window import SymlinkMainWindow
 from settings_manager import SettingsManager
 from startup_manager import StartupManager
 
 
+def setup_logging():
+    """Set up application logging to symlmg.log in the app root directory.
+    The log file is truncated (cleared) on every app start."""
+    log_path = Path(__file__).parent / "symlmg.log"
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        filename=str(log_path),
+        filemode="w",  # Truncate on every start
+        encoding="utf-8",
+    )
+    # Also log to console for development
+    console = logging.StreamHandler()
+    console.setLevel(logging.INFO)
+    console.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logging.getLogger().addHandler(console)
+    return log_path
+
+
 def main():
     """Main entry point for the application."""
+    log_path = setup_logging()
+    logging.info(f"Symlink Manager v2.0.1 starting — log: {log_path}")
+    
     app = QApplication(sys.argv)
     app.setApplicationName("Symlink Manager")
     app.setApplicationVersion("2.0.1")
@@ -38,8 +63,8 @@ def main():
     else:
         window.show()
     
-    # Print window size for debugging
-    print(f"Window size: {window.width()}x{window.height()}")
+    # Log window size for debugging
+    logging.info(f"Window size: {window.width()}x{window.height()}")
     
     sys.exit(app.exec())
 

@@ -6,6 +6,7 @@ Supports Windows, macOS, and Linux startup registration.
 import os
 import sys
 import platform
+import logging
 from pathlib import Path
 
 
@@ -68,7 +69,7 @@ class StartupManager:
                 else:
                     return StartupManager._disable_startup_linux()
         except Exception as e:
-            print(f"Error {'enabling' if enabled else 'disabling'} autostart: {e}")
+            logging.warning(f"Error {'enabling' if enabled else 'disabling'} autostart: {e}")
             return False
 
     # ------------------------------------------------------------------ #

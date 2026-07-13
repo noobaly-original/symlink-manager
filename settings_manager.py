@@ -4,6 +4,7 @@ Handles saving and loading user preferences and history.
 """
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, List
@@ -98,7 +99,7 @@ class SettingsManager:
                 json.dump(self.settings, f, indent=2)
             return True
         except Exception as e:
-            print(f"Error saving settings: {e}")
+            logging.warning(f"Error saving settings: {e}")
             return False
     
     def save_history(self) -> bool:
@@ -108,7 +109,7 @@ class SettingsManager:
                 json.dump(self.history, f, indent=2)
             return True
         except Exception as e:
-            print(f"Error saving history: {e}")
+            logging.warning(f"Error saving history: {e}")
             return False
     
     def save_symlinks(self) -> bool:
@@ -118,7 +119,7 @@ class SettingsManager:
                 json.dump(self.symlinks, f, indent=2)
             return True
         except Exception as e:
-            print(f"Error saving symlinks: {e}")
+            logging.warning(f"Error saving symlinks: {e}")
             return False
     
     def get_setting(self, key: str, default: Any = None) -> Any:
