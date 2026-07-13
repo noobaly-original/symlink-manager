@@ -30,6 +30,96 @@ from startup_manager import StartupManager
 from title_bar import TitleBar
 
 
+class MergeSettingsDialog(QDialog):
+    """Dialog for configuring merge source → target directory pairs."""
+
+    def __init__(self, settings_manager, parent=None):
+        super().__init__(parent)
+        self.settings_manager = settings_manager
+        self.setWindowTitle("Merge Settings")
+        self.setMinimumSize(550, 350)
+        self.setModal(True)
+        self._build_ui()
+        self._load_pairs()
+
+    def _build_ui(self):
+        layout = QVBoxLayout()
+
+        help_label = QLabel(
+            "Configure source and target directory pairs for merge operations.\n"
+            "When persistence runs, the target directory is scanned for files not\n"
+            "in the source. These files are moved to the source and symlinked back."
+        )
+        help_label.setWordWrap(True)
+        help_label.setStyleSheet("font-size: 9pt; color: #888; margin-bottom: 6px;")
+        layout.addWidget(help_label)
+
+        # Table
+        self.pairs_table = QTableWidget()
+        self.pairs_table.setColumnCount(3)
+        self.pairs_table.setHorizontalHeaderLabels(['Source Directory', 'Target Directory', ''])
+        hdr = self.pairs_table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.pairs_table.setColumnWidth(2, 60)
+        layout.addWidget(self.pairs_table)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        add_btn = QPushButton("+ Add Pair")
+        add_btn.clicked.connect(self._add_pair)
+        btn_layout.addWidget(add_btn)
+        btn_layout.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(close_btn)
+        layout.addLayout(btn_layout)
+        self.setLayout(layout)
+
+    def _load_pairs(self):
+        pairs = self.settings_manager.get_merge_pairs()
+        self.pairs_table.setRowCount(len(pairs))
+        for row, pair in enumerate(pairs):
+            self._populate_row(row, pair['source'], pair['target'])
+
+    def _populate_row(self, row, source, target):
+        source_edit = QLineEdit(source)
+        source_edit.setPlaceholderText("C:\\Source\\Dir")
+        target_edit = QLineEdit(target)
+        target_edit.setPlaceholderText("C:\\Symlink\\Dir")
+        remove_btn = QPushButton("✕")
+        remove_btn.setMaximumWidth(30)
+        remove_btn.clicked.connect(lambda: self._remove_pair_row(row))
+        self.pairs_table.setCellWidget(row, 0, source_edit)
+        self.pairs_table.setCellWidget(row, 1, target_edit)
+        self.pairs_table.setCellWidget(row, 2, remove_btn)
+
+    def _add_pair(self):
+        row = self.pairs_table.rowCount()
+        self.pairs_table.insertRow(row)
+        self._populate_row(row, "", "")
+
+    def _remove_pair_row(self, row):
+        self.pairs_table.removeRow(row)
+
+    def accept(self):
+        """Save all pairs and close."""
+        pairs = []
+        for row in range(self.pairs_table.rowCount()):
+            src = self.pairs_table.cellWidget(row, 0)
+            tgt = self.pairs_table.cellWidget(row, 1)
+            if src and tgt:
+                s = src.text().strip()
+                t = tgt.text().strip()
+                if s and t:
+                    pairs.append({'source': s, 'target': t})
+        # Clear and re-save
+        self.settings_manager.symlinks['merge_pairs'] = pairs
+        self.settings_manager.save_symlinks()
+        super().accept()
+
+
 class CreationWorker:
     """Worker for background symlink creation."""
     
@@ -392,17 +482,28 @@ class SymlinkMainWindow(QMainWindow):
         options_layout = QHBoxLayout()
         
         self.relative_checkbox = QCheckBox("Relative")
-        default_relative = self.settings_manager.get_setting('relative_by_default', False)
-        self.relative_checkbox.setChecked(default_relative)
+        self.relative_checkbox.setChecked(
+            self.settings_manager.get_setting('create_relative', False)
+        )
+        self.relative_checkbox.toggled.connect(
+            lambda c: self.settings_manager.set_setting('create_relative', c))
         options_layout.addWidget(self.relative_checkbox)
         
         self.force_checkbox = QCheckBox("Force")
+        self.force_checkbox.setChecked(
+            self.settings_manager.get_setting('create_force', False)
+        )
+        self.force_checkbox.toggled.connect(
+            lambda c: self.settings_manager.set_setting('create_force', c))
         options_layout.addWidget(self.force_checkbox)
         
         if self.symlink_manager.is_windows():
             self.admin_checkbox = QCheckBox("Admin")
-            # Admin mode runs mklink via an elevated .bat helper (UAC prompt)
-            self.admin_checkbox.setChecked(False)
+            self.admin_checkbox.setChecked(
+                self.settings_manager.get_setting('create_admin', False)
+            )
+            self.admin_checkbox.toggled.connect(
+                lambda c: self.settings_manager.set_setting('create_admin', c))
             options_layout.addWidget(self.admin_checkbox)
         else:
             self.admin_checkbox = None
@@ -445,8 +546,8 @@ class SymlinkMainWindow(QMainWindow):
         layout.addWidget(table_label)
         
         self.symlinks_table = QTableWidget()
-        self.symlinks_table.setColumnCount(6)
-        self.symlinks_table.setHorizontalHeaderLabels(['Target', 'Source', 'Status', 'Notes', 'Created', 'Merge'])
+        self.symlinks_table.setColumnCount(5)
+        self.symlinks_table.setHorizontalHeaderLabels(['Target', 'Source', 'Status', 'Notes', 'Created'])
         # Interactive mode — user can resize all columns manually.
         header = self.symlinks_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -456,12 +557,10 @@ class SymlinkMainWindow(QMainWindow):
         self.symlinks_table.setColumnWidth(2, 80)   # Status
         self.symlinks_table.setColumnWidth(3, 150)  # Notes
         self.symlinks_table.setColumnWidth(4, 90)   # Created
-        self.symlinks_table.setColumnWidth(5, 60)   # Merge
         self.symlinks_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.symlinks_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.symlinks_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.symlinks_table.customContextMenuRequested.connect(self.show_manage_table_context_menu)
-        self.symlinks_table.itemChanged.connect(self._on_symlinks_table_item_changed)
         
         layout.addWidget(self.symlinks_table)
         
@@ -580,15 +679,6 @@ class SymlinkMainWindow(QMainWindow):
             created = link.get('created_at', '')[:10]
             created_item = QTableWidgetItem(created)
             self.symlinks_table.setItem(row, 4, created_item)
-
-            # Merge checkbox
-            # Merge checkbox — tied to the source directory, not the symlink
-            merge_enabled = self.settings_manager.is_merge_source(link['source'])
-            merge_check = QTableWidgetItem()
-            merge_check.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            merge_check.setCheckState(Qt.CheckState.Checked if merge_enabled else Qt.CheckState.Unchecked)
-            merge_check.setData(Qt.ItemDataRole.UserRole + 1, link['source'])  # store source for callback
-            self.symlinks_table.setItem(row, 5, merge_check)
         
         # Update status
         self.update_symlinks_status()
@@ -982,7 +1072,7 @@ class SymlinkMainWindow(QMainWindow):
 
         # Interval spin row
         interval_layout = QHBoxLayout()
-        interval_layout.setContentsMargins(24, 0, 0, 0)  # indent under checkbox
+        interval_layout.setContentsMargins(24, 0, 0, 0)
         interval_label = QLabel("Check interval (seconds):")
         interval_label.setStyleSheet("font-size: 9pt;")
         interval_layout.addWidget(interval_label)
@@ -1000,19 +1090,21 @@ class SymlinkMainWindow(QMainWindow):
         interval_layout.addStretch()
         pm_layout.addLayout(interval_layout)
 
-        self.merge_management_checkbox = QCheckBox("Merge management — merge source into symlink folder before recreating")
-        self.merge_management_checkbox.setChecked(
-            self.settings_manager.get_setting('merge_management', False)
-        )
-        self.merge_management_checkbox.toggled.connect(self._on_merge_management_toggled)
-        pm_layout.addWidget(self.merge_management_checkbox)
+        # Merge Settings button
+        merge_btn_layout = QHBoxLayout()
+        self.merge_settings_btn = QPushButton("Merge Settings...")
+        self.merge_settings_btn.clicked.connect(self._open_merge_settings)
+        merge_btn_layout.addWidget(self.merge_settings_btn)
+        merge_btn_layout.addStretch()
+        pm_layout.addLayout(merge_btn_layout)
 
         pm_info = QLabel(
-            "Persistence checks all tracked symlinks every N seconds and automatically "
-            "recreates any that are missing. Duplicate target paths are silently skipped.\n\n"
-            "Merge management scans the symlink's parent directory for items not present "
-            "in the source. These items are copied into the source, removed from the target, "
-            "and replaced with new symlinks. Duplicate resolved paths are silently ignored."
+            "Persistence checks all tracked symlinks every N seconds and\n"
+            "automatically recreates any that are missing.\n\n"
+            "Merge Settings lets you define source → target directory pairs.\n"
+            "When a merge pair matches a missing symlink, the target folder is\n"
+            "scanned for items not in the source. Those are copied to source,\n"
+            "removed from target, and replaced with new symlinks."
         )
         pm_info.setWordWrap(True)
         pm_info.setStyleSheet("font-size: 9pt; color: #888;")
@@ -1082,37 +1174,16 @@ class SymlinkMainWindow(QMainWindow):
             self._persist_timer.setInterval(seconds * 1000)
             logging.info(f"Persistence interval changed to {seconds}s")
 
-    def _on_symlinks_table_item_changed(self, item: QTableWidgetItem):
-        """Handle changes in the symlinks table (e.g. Merge checkbox toggle)."""
-        # Only process the Merge column (index 5)
-        if item.column() != 5:
-            return
-        source = item.data(Qt.ItemDataRole.UserRole + 1)
-        if not source:
-            return
-        merge_enabled = item.checkState() == Qt.CheckState.Checked
-        # Block signals to prevent recursion when we update the item
-        self.symlinks_table.blockSignals(True)
-        self.settings_manager.set_merge_source(source, merge_enabled)
-        # Sync all rows that share this source so they show the same state
-        self.refresh_symlinks_table()
-        self.symlinks_table.blockSignals(False)
-        logging.info(f"Merge {'enabled' if merge_enabled else 'disabled'} for source '{source}'")
-
     def _on_batch_operation_completed(self, source: str, success: bool, message: str):
         """Called when a batch operation completes — refresh the Manage tab."""
-        # Refresh the Manage tab's symlinks table so new symlinks appear
         if self.tabs.currentIndex() == 1:
             self.refresh_symlinks_table()
-        else:
-            # Even if not visible, mark it stale so it refreshes on tab switch
-            pass
 
-    def _on_merge_management_toggled(self, checked: bool):
-        """Handle merge-management checkbox toggle."""
-        self.settings_manager.set_setting('merge_management', checked)
-        logging.info(f"Merge management {'enabled' if checked else 'disabled'}")
-    
+    def _open_merge_settings(self):
+        """Open the Merge Settings dialog."""
+        dialog = MergeSettingsDialog(self.settings_manager, self)
+        dialog.exec()
+
     def browse_source(self):
         """Open file dialog to select source."""
         dialog = QFileDialog(self)
@@ -1253,9 +1324,11 @@ class SymlinkMainWindow(QMainWindow):
         self.source_input.clear()
         self.target_input.clear()
         self.relative_checkbox.setChecked(
-            self.settings_manager.get_setting('relative_by_default', False)
+            self.settings_manager.get_setting('create_relative', False)
         )
-        self.force_checkbox.setChecked(False)
+        self.force_checkbox.setChecked(
+            self.settings_manager.get_setting('create_force', False)
+        )
     
     def refresh_history(self):
         """Refresh the history display."""
@@ -1366,13 +1439,13 @@ class SymlinkMainWindow(QMainWindow):
             return
 
         logging.info(f"Persistence check: {len(missing)} symlink(s) missing — attempting recovery")
-        global_merge = self.settings_manager.get_setting('merge_management', False)
 
         # ---- Phase 1: Merge (per-source, collects batch operations) ----
         batch_ops = []       # (source, target, is_dir, force, relative, admin)
         merge_tracked = []   # new sub-symlinks to track after batch
         seen_targets = set() # silently ignore duplicate target paths
         needs_admin = False
+        merge_pairs = self.settings_manager.get_merge_pairs()
 
         for entry in missing:
             source = entry['source']
@@ -1385,19 +1458,24 @@ class SymlinkMainWindow(QMainWindow):
 
             try:
                 source_path = Path(source)
-                # Per-source merge: only merge if the source directory has merge enabled
-                # AND the global merge_management setting is on
-                if global_merge and self.settings_manager.is_merge_source(source) and source_path.is_dir():
-                    merge_ok, merge_msg, new_symlinks = self.symlink_manager.merge_directories(source, target)
-                    if not merge_ok:
-                        logging.warning(f"Persistence recovery: merge failed for '{target}': {merge_msg}")
-                    else:
-                        logging.info(f"Persistence recovery: {merge_msg} for '{target}'")
-                        for ns in new_symlinks:
-                            merge_tracked.append(ns)
-                            # Add to batch ops for symlink creation (is_dir comes from merge)
-                            batch_ops.append((ns['source'], ns['target'],
-                                              ns.get('is_dir', Path(ns['source']).is_dir()), False, False, False))
+                # Check if the symlink's parent directory matches any merge pair's target
+                if merge_pairs:
+                    symlink_parent = str(Path(target).parent.resolve())
+                    for pair in merge_pairs:
+                        if str(Path(pair['target']).resolve()) == symlink_parent:
+                            # Run merge using the pair's source as the merge source
+                            merge_ok, merge_msg, new_symlinks = self.symlink_manager.merge_directories(
+                                pair['source'], target
+                            )
+                            if not merge_ok:
+                                logging.warning(f"Persistence recovery: merge failed for '{target}': {merge_msg}")
+                            else:
+                                logging.info(f"Persistence recovery: {merge_msg} for '{target}'")
+                                for ns in new_symlinks:
+                                    merge_tracked.append(ns)
+                                    batch_ops.append((ns['source'], ns['target'],
+                                                      ns.get('is_dir', Path(ns['source']).is_dir()), False, False, False))
+                            break
 
                 # Add the main symlink to batch operations
                 is_dir = source_path.is_dir() if source_path.exists() else False

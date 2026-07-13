@@ -63,6 +63,13 @@ class SettingsManager:
             'persist_symlinks': False,
             'merge_management': False,
             'persistence_interval': 60,
+            'batch_admin': False,
+            'batch_skip_errors': False,
+            'batch_force': False,
+            'batch_relative': False,
+            'create_admin': False,
+            'create_force': False,
+            'create_relative': False,
         }
     
     def _load_history(self) -> Dict[str, List[str]]:
@@ -93,7 +100,8 @@ class SettingsManager:
         # Default symlinks structure
         return {
             'symlinks': [],  # List of tracked symlinks
-            'merge_sources': [],  # Source paths with merge enabled
+            'merge_sources': [],  # Source paths with merge enabled (legacy)
+            'merge_pairs': [],  # List of {source, target} merge pair dicts
         }
     
     def save_settings(self) -> bool:
@@ -333,7 +341,7 @@ class SettingsManager:
         return source in self.symlinks.get('merge_sources', [])
 
     def set_merge_source(self, source: str, enabled: bool) -> None:
-        """Enable or disable merge for a source directory."""
+        """Enable or disable merge for a source directory (legacy)."""
         merge_sources = self.symlinks.setdefault('merge_sources', [])
         if enabled:
             if source not in merge_sources:
@@ -342,6 +350,35 @@ class SettingsManager:
             if source in merge_sources:
                 merge_sources.remove(source)
         self.save_symlinks()
+
+    # ------------------------------------------------------------------ #
+    #  Merge pairs (source → target directory pairs)
+    # ------------------------------------------------------------------ #
+
+    def get_merge_pairs(self) -> List[dict]:
+        """Get all configured merge pairs."""
+        return self.symlinks.get('merge_pairs', [])
+
+    def add_merge_pair(self, source: str, target: str) -> bool:
+        """Add a new merge pair. Returns False if duplicate."""
+        pairs = self.symlinks.setdefault('merge_pairs', [])
+        for p in pairs:
+            if p['source'] == source and p['target'] == target:
+                return False
+        pairs.append({'source': source, 'target': target})
+        self.save_symlinks()
+        return True
+
+    def remove_merge_pair(self, source: str, target: str) -> bool:
+        """Remove a merge pair."""
+        pairs = self.symlinks.setdefault('merge_pairs', [])
+        original = len(pairs)
+        self.symlinks['merge_pairs'] = [p for p in pairs
+                                        if not (p['source'] == source and p['target'] == target)]
+        if len(self.symlinks['merge_pairs']) < original:
+            self.save_symlinks()
+            return True
+        return False
 
     def get_symlink_by_target(self, target: str) -> dict:
         """Get a symlink entry by target path."""

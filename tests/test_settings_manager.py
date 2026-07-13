@@ -167,5 +167,68 @@ class TestMergeSource:
         assert sm2.is_merge_source('/persist/src') is True
 
 
+# --------------------------------------------------------------------------- #
+#  Merge pairs
+# --------------------------------------------------------------------------- #
+
+class TestMergePairs:
+    def test_get_merge_pairs_empty(self, settings_manager):
+        assert settings_manager.get_merge_pairs() == []
+
+    def test_add_merge_pair(self, settings_manager):
+        result = settings_manager.add_merge_pair('/src', '/tgt')
+        assert result is True
+        pairs = settings_manager.get_merge_pairs()
+        assert len(pairs) == 1
+        assert pairs[0] == {'source': '/src', 'target': '/tgt'}
+
+    def test_add_duplicate_pair(self, settings_manager):
+        settings_manager.add_merge_pair('/src', '/tgt')
+        result = settings_manager.add_merge_pair('/src', '/tgt')
+        assert result is False
+
+    def test_remove_merge_pair(self, settings_manager):
+        settings_manager.add_merge_pair('/src', '/tgt')
+        result = settings_manager.remove_merge_pair('/src', '/tgt')
+        assert result is True
+        assert settings_manager.get_merge_pairs() == []
+
+    def test_remove_nonexistent_pair(self, settings_manager):
+        result = settings_manager.remove_merge_pair('/nope', '/nope')
+        assert result is False
+
+    def test_merge_pairs_persist(self, config_dir):
+        sm1 = SettingsManager(str(config_dir))
+        sm1.add_merge_pair('/p/src', '/p/tgt')
+        del sm1
+
+        sm2 = SettingsManager(str(config_dir))
+        pairs = sm2.get_merge_pairs()
+        assert len(pairs) == 1
+        assert pairs[0]['source'] == '/p/src'
+
+
+# --------------------------------------------------------------------------- #
+#  Persistent create/batch options
+# --------------------------------------------------------------------------- #
+
+class TestPersistentOptions:
+    def test_create_admin_default(self, settings_manager):
+        assert settings_manager.get_setting('create_admin', False) is False
+
+    def test_batch_skip_errors_default(self, settings_manager):
+        assert settings_manager.get_setting('batch_skip_errors', False) is False
+
+    def test_batch_force_default(self, settings_manager):
+        assert settings_manager.get_setting('batch_force', False) is False
+
+    def test_create_relative_persists(self, config_dir):
+        sm1 = SettingsManager(str(config_dir))
+        sm1.set_setting('create_relative', True)
+        del sm1
+        sm2 = SettingsManager(str(config_dir))
+        assert sm2.get_setting('create_relative') is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
