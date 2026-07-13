@@ -11,7 +11,7 @@ A modern, cross-platform GUI application for creating and managing symbolic link
 - 🎨 **Modern GUI** — 7 themes (Dark, Light, Monokai, Pastel Pink, Pastel Blue, Pastel Green, Pastel Orange) with drag-and-drop path input
 - 🖼️ **Custom Frameless Window** — Beautiful custom title bar with minimize, maximize, and close buttons; draggable and theme-aware
 - 🛡️ **Path Validation** — Validates paths before creating symlinks
-- 🔒 **Admin Mode** (Windows) — Create symlinks in system-protected directories; UIPI patched for drag-and-drop support when running elevated
+- 🔒 **Admin Mode** (Windows) — Create symlinks in system-protected directories
 - 📋 **Symlink Tracking** — Automatically track, annotate, verify, and delete symlinks
 - 📊 **History & Statistics** — View creation history and most-used paths
 - 🖥️ **System Tray** — Minimize to tray, right-click menu with Open/Close, double-click to restore
