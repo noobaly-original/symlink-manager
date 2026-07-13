@@ -8,11 +8,14 @@ import sys
 import platform
 import subprocess
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 
 
 class SymlinkManager:
     """Manages symlink creation across different platforms."""
+    
+    # Class-level cache: tracks whether we've already detected admin elevation
+    _is_elevated = None
     
     @staticmethod
     def is_windows():
@@ -28,6 +31,50 @@ class SymlinkManager:
     def is_linux():
         """Check if running on Linux."""
         return platform.system() == "Linux"
+    
+    @staticmethod
+    def _check_elevated() -> bool:
+        """Check if the current process is running with admin privileges."""
+        if SymlinkManager._is_elevated is not None:
+            return SymlinkManager._is_elevated
+        try:
+            if SymlinkManager.is_windows():
+                import ctypes
+                SymlinkManager._is_elevated = ctypes.windll.shell32.IsUserAnAdmin() != 0
+            else:
+                SymlinkManager._is_elevated = os.geteuid() == 0
+        except Exception:
+            SymlinkManager._is_elevated = False
+        return SymlinkManager._is_elevated
+
+    @staticmethod
+    def relaunch_as_admin():
+        """
+        Relaunch the application with administrator privileges.
+        Works on Windows for both script mode and PyInstaller bundles.
+        Exits the current process after launching.
+        """
+        if not SymlinkManager.is_windows():
+            return False
+        try:
+            import ctypes
+            # Determine if we're running as a PyInstaller bundle
+            if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+                # PyInstaller .exe: self-contained, no arguments needed
+                ctypes.windll.shell32.ShellExecuteW(
+                    None, "runas", sys.executable, None, None, 1
+                )
+            else:
+                # Running as Python script: pass script path as argument
+                script = str(Path(sys.argv[0]).absolute())
+                ctypes.windll.shell32.ShellExecuteW(
+                    None, "runas", sys.executable, script, None, 1
+                )
+            # Exit the current (non-elevated) process
+            sys.exit(0)
+        except Exception:
+            return False
+        return True
     
     @staticmethod
     def validate_paths(source: str, target: str) -> Tuple[bool, str]:
@@ -117,66 +164,62 @@ class SymlinkManager:
         try:
             source_path = Path(source)
             target_path = Path(target)
-            
-            # Determine if source is a directory
             is_dir = source_path.is_dir()
-            
-            # Build mklink command as a list (safer than string concatenation)
-            cmd = ["mklink"]
-            if is_dir:
-                cmd.append("/D")  # Directory junction
-            
+
+            # Remove existing target if force is set
             if force and target_path.exists():
                 try:
-                    if is_dir:
-                        os.rmdir(target)
+                    if target_path.is_dir() and not target_path.is_symlink():
+                        os.rmdir(str(target_path))
                     else:
-                        os.remove(target)
+                        target_path.unlink()
                 except Exception as e:
                     return False, f"Could not remove existing target: {e}"
-            
-            # Add target and source as separate list items - subprocess will handle escaping
-            cmd.append(str(target_path))
-            cmd.append(str(source_path))
-            
-            if admin:
-                # Use subprocess with elevation via powershell (safer than ShellExecuteW)
-                try:
-                    import json
-                    # Build a safe command string using PowerShell's argument array syntax
-                    powershell_cmd = [
-                        "powershell",
-                        "-NoProfile",
-                        "-Command",
-                        f"Start-Process cmd.exe -Verb RunAs -ArgumentList '/c','mklink {'/D' if is_dir else ''} \"{target_path}\" \"{source_path}\"' -Wait"
-                    ]
-                    result = subprocess.run(
-                        powershell_cmd,
-                        capture_output=True,
-                        text=True,
-                        check=False
-                    )
-                    if result.returncode != 0:
-                        return False, f"Failed to create symlink with admin privileges: {result.stderr}"
-                    return True, f"Symlink created (via administrator): {target}"
-                except Exception as e:
-                    return False, f"Failed to create symlink with admin privileges: {e}"
-            else:
-                # Try direct creation first using subprocess list form (no shell injection)
-                try:
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                        shell=False  # Explicitly disable shell to prevent injection
-                    )
-                    if result.returncode != 0:
-                        return False, f"Failed to create symlink: {result.stderr}"
+
+            # If already elevated, skip directly to mklink
+            if SymlinkManager._check_elevated():
+                cmd = ["mklink"]
+                if is_dir:
+                    cmd.append("/D")
+                cmd.append(str(target_path))
+                cmd.append(str(source_path))
+                # mklink is a cmd.exe internal command — must use shell=True
+                result = subprocess.run(
+                    " ".join(f'"{c}"' for c in cmd), capture_output=True, text=True,
+                    check=False, shell=True
+                )
+                if result.returncode == 0:
                     return True, f"Symlink created successfully: {target}"
-                except Exception as e:
-                    return False, f"Error creating symlink: {e}"
-        
+                return False, f"Failed to create symlink: {result.stderr}"
+
+            # Try Python's os.symlink() — works on Win10+ with Developer Mode
+            try:
+                os.symlink(source, target, target_is_directory=is_dir)
+                return True, f"Symlink created successfully: {target}"
+            except OSError:
+                pass
+
+            # Try mklink directly (may work without admin on some systems)
+            try:
+                cmd = ["mklink"]
+                if is_dir:
+                    cmd.append("/D")
+                cmd.append(str(target_path))
+                cmd.append(str(source_path))
+                # mklink is a cmd.exe internal command — must use shell=True
+                result = subprocess.run(
+                    " ".join(f'"{c}"' for c in cmd), capture_output=True, text=True,
+                    check=False, shell=True
+                )
+                if result.returncode == 0:
+                    return True, f"Symlink created successfully: {target}"
+            except Exception:
+                pass
+
+            # Not elevated and all non-admin methods failed.
+            # Return a special error so the UI can offer to restart as admin.
+            return False, "ADMIN_REQUIRED"
+
         except Exception as e:
             return False, f"Error creating symlink on Windows: {e}"
     

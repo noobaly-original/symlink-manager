@@ -8,14 +8,16 @@ A modern, cross-platform GUI application for creating and managing symbolic link
 
 ### Core
 - 🔗 **Create Symlinks** — File and directory symlinks on any supported OS
-- 🎨 **Modern GUI** — Dark/light/monokai and pastel pink themes with drag-and-drop path input
+- 🎨 **Modern GUI** — 7 themes (Dark, Light, Monokai, Pastel Pink, Pastel Blue, Pastel Green, Pastel Orange) with drag-and-drop path input
 - 🖼️ **Custom Frameless Window** — Beautiful custom title bar with minimize, maximize, and close buttons; draggable and theme-aware
 - 🛡️ **Path Validation** — Validates paths before creating symlinks
-- 🔒 **Admin Mode** (Windows) — Create symlinks in system-protected directories
+- 🔒 **Admin Mode** (Windows) — Create symlinks in system-protected directories; UIPI patched for drag-and-drop support when running elevated
 - 📋 **Symlink Tracking** — Automatically track, annotate, verify, and delete symlinks
 - 📊 **History & Statistics** — View creation history and most-used paths
 - 🖥️ **System Tray** — Minimize to tray, right-click menu with Open/Close, double-click to restore
 - 🚀 **Autostart** — Option to launch on system login (starts minimized to tray)
+- 📦 **Batch Operations** — Create multiple symlinks at once from a CSV or manual list
+- 🏗️ **PyInstaller Bundle** — Compatible with standalone .exe builds; elevation, autostart, and drag-drop all work in bundled mode
 
 ### Options
 | Option | Description |
@@ -94,7 +96,7 @@ The **History** tab shows:
 ### Settings
 
 The **Settings** tab lets you:
-- Switch between **Dark**, **Light**, **Monokai**, and **Pastel Pink** themes
+- Switch between **Dark**, **Light**, **Monokai**, **Pastel Pink**, **Pastel Blue**, **Pastel Green**, and **Pastel Orange** themes
 - Toggle **Minimize to system tray on close** — closing the window minimizes to tray instead of quitting
 - Toggle **Start on system login (minimized to tray)** — register the app to launch automatically when you log in
 - View platform and Python version info
@@ -170,7 +172,7 @@ All data is stored as JSON in a platform-specific directory:
 | **"Target path already exists"** | Enable **Force** to overwrite, or choose a different target location. |
 | **"No write permission"** (Linux/macOS) | Check write permissions on the target directory (`chmod` if needed). |
 | **App won't start** | Run from a terminal to see error messages. Ensure Python 3.8+ and all dependencies are installed. |
-| **Drag & drop not working** | Your file manager must support standard MIME types. Works on Windows 7+, macOS 10.13+, and modern Linux desktops. |
+| **Drag & drop not working** | Your file manager must support standard MIME types. Works on Windows 7+, macOS 10.13+, and modern Linux desktops. If running as admin, the app automatically patches UIPI to allow drag-drop from non-elevated Explorer. |
 | **Autostart not working** | Try running the app as administrator (Windows) or check the autostart directory permissions (macOS/Linux). |
 
 ---
@@ -184,6 +186,7 @@ symlink-manager/
 ├── symlink_manager.py      # Core symlink creation/removal logic
 ├── settings_manager.py     # Settings, history, and symlink tracking persistence
 ├── drag_drop_widgets.py    # Drag-and-drop enabled QLineEdit
+├── batch_operations_widget.py  # Batch symlink creation from CSV/lists
 ├── tray_icon.py            # System tray icon implementation
 ├── title_bar.py            # Custom frameless title bar widget
 ├── startup_manager.py      # Cross-platform autostart registration

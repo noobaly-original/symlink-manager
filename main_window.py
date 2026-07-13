@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QCheckBox, QFileDialog, QMessageBox,
     QTabWidget, QListWidget, QListWidgetItem, QComboBox, QTableWidget,
     QTableWidgetItem, QDialog, QScrollArea, QFormLayout, QStatusBar, QMenu,
-    QApplication
+    QApplication, QHeaderView
 )
 from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSignal, QMimeData
 from PyQt6.QtGui import QIcon, QFont, QColor
@@ -22,6 +22,7 @@ from symlink_manager import SymlinkManager
 from settings_manager import SettingsManager
 from ui_styles import get_theme_stylesheet
 from drag_drop_widgets import DragDropLineEdit
+from batch_operations_widget import BatchOperationsWidget
 from tray_icon import TrayIcon
 from startup_manager import StartupManager
 from title_bar import TitleBar
@@ -61,14 +62,16 @@ class SymlinkMainWindow(QMainWindow):
         self._resize_edge = 0
         self._drag_start_pos = None
         self._drag_start_geo = None
+        self._pending_maximize = False
         
         self.initUI()
+        self._patch_uipi_for_window()  # Enable drag-drop when elevated
         self.load_settings()
         
     def initUI(self):
         """Initialize the user interface."""
         self.setWindowTitle('Symlink Manager')
-        self.setMinimumSize(600, 400)
+        self.setMinimumSize(600, 660)
         self.resize(650, 420)
         
         # Remove the native window frame (cross-platform)
@@ -111,7 +114,7 @@ class SymlinkMainWindow(QMainWindow):
         # Create tab widget for different sections
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet("QTabBar::tab { padding: 6px 12px; }")
-        self._content_layout.addWidget(self.tabs)
+        self._content_layout.addWidget(self.tabs, stretch=1)
         
         # Tab 1: Create Symlink
         create_tab = self.create_symlink_tab()
@@ -121,11 +124,15 @@ class SymlinkMainWindow(QMainWindow):
         manage_tab = self.create_manage_symlinks_tab()
         self.tabs.addTab(manage_tab, "Manage")
         
-        # Tab 3: History & Statistics
+        # Tab 3: Batch Operations
+        self.batch_widget = BatchOperationsWidget()
+        self.tabs.addTab(self.batch_widget, "Batch")
+
+        # Tab 4: History & Statistics
         history_tab = self.create_history_tab()
         self.tabs.addTab(history_tab, "History")
         
-        # Tab 4: Settings
+        # Tab 5: Settings
         settings_tab = self.create_settings_tab()
         self.tabs.addTab(settings_tab, "Settings")
         
@@ -147,6 +154,43 @@ class SymlinkMainWindow(QMainWindow):
         # Initialize system tray icon
         self._setup_tray_icon()
     
+    def _patch_uipi_for_window(self):
+        """
+        When running elevated on Windows, UIPI blocks drag-drop from Explorer.
+        Apply ChangeWindowMessageFilterEx to this window's HWND to allow
+        OLE drag-drop messages through.
+        """
+        if sys.platform != 'win32':
+            return
+        # Can only patch after the window has been shown — lazy-patch on first show
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            if not ctypes.windll.shell32.IsUserAnAdmin():
+                return
+
+            # Wait until the native winId() is valid
+            hwnd = int(self.winId())
+            if hwnd == 0:
+                return
+
+            MSGFLT_ALLOW = 1
+            WM_DROPFILES = 0x0233
+            WM_COPYDATA = 0x004A
+            WM_COPYGLOBALDATA = 0x0049
+
+            user32 = ctypes.windll.user32
+            change_filter_ex = user32.ChangeWindowMessageFilterEx
+            change_filter_ex.argtypes = [
+                wintypes.HWND, wintypes.UINT, wintypes.DWORD, ctypes.c_void_p,
+            ]
+            change_filter_ex.restype = wintypes.BOOL
+            for msg in (WM_DROPFILES, WM_COPYDATA, WM_COPYGLOBALDATA):
+                change_filter_ex(hwnd, msg, MSGFLT_ALLOW, None)
+        except Exception:
+            pass  # Best-effort
+
     def _setup_tray_icon(self):
         """Set up the system tray icon."""
         self.tray_icon = TrayIcon(self)
@@ -311,10 +355,13 @@ class SymlinkMainWindow(QMainWindow):
         self.tabs.setCurrentIndex(0)
     
     def save_window_geometry(self):
-        """Save the current window geometry."""
+        """Save the current window geometry (size, position, maximized state)."""
         geometry = {
             'width': self.width(),
-            'height': self.height()
+            'height': self.height(),
+            'x': self.x(),
+            'y': self.y(),
+            'maximized': self.isMaximized(),
         }
         self.settings_manager.set_setting('window_geometry', geometry)
     
@@ -372,8 +419,8 @@ class SymlinkMainWindow(QMainWindow):
         
         if self.symlink_manager.is_windows():
             self.admin_checkbox = QCheckBox("Admin")
-            # Automatically enable admin mode on Windows platforms
-            self.admin_checkbox.setChecked(True)
+            # Admin mode only needed if Developer Mode is off and os.symlink fails
+            self.admin_checkbox.setChecked(False)
             options_layout.addWidget(self.admin_checkbox)
         else:
             self.admin_checkbox = None
@@ -418,7 +465,15 @@ class SymlinkMainWindow(QMainWindow):
         self.symlinks_table = QTableWidget()
         self.symlinks_table.setColumnCount(5)
         self.symlinks_table.setHorizontalHeaderLabels(['Target', 'Source', 'Status', 'Notes', 'Created'])
-        self.symlinks_table.horizontalHeader().setStretchLastSection(True)
+        # Interactive mode — user can resize all columns manually.
+        header = self.symlinks_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(True)
+        self.symlinks_table.setColumnWidth(0, 200)  # Target
+        self.symlinks_table.setColumnWidth(1, 180)  # Source
+        self.symlinks_table.setColumnWidth(2, 80)   # Status
+        self.symlinks_table.setColumnWidth(3, 150)  # Notes
+        self.symlinks_table.setColumnWidth(4, 90)   # Created
         self.symlinks_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.symlinks_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.symlinks_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -495,15 +550,13 @@ class SymlinkMainWindow(QMainWindow):
         status_map = {link['target']: link['status'] for link in status['symlinks']}
         
         for row, link in enumerate(symlinks):
-            # Target
-            target_text = link['target'][-50:] if len(link['target']) > 50 else link['target']
-            target_item = QTableWidgetItem(target_text)
+            # Target — store full path, display full path (table shows ellipsis)
+            target_item = QTableWidgetItem(link['target'])
             target_item.setData(Qt.ItemDataRole.UserRole, link['target'])
             self.symlinks_table.setItem(row, 0, target_item)
             
             # Source
-            source_text = link['source'][-40:] if len(link['source']) > 40 else link['source']
-            source_item = QTableWidgetItem(source_text)
+            source_item = QTableWidgetItem(link['source'])
             self.symlinks_table.setItem(row, 1, source_item)
             
             # Status - get actual status from verification
@@ -742,7 +795,13 @@ class SymlinkMainWindow(QMainWindow):
         self.history_table = QTableWidget()
         self.history_table.setColumnCount(4)
         self.history_table.setHorizontalHeaderLabels(['Time', 'Source', 'Target', 'Status'])
-        self.history_table.horizontalHeader().setStretchLastSection(True)
+        hdr = self.history_table.horizontalHeader()
+        hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        hdr.setStretchLastSection(True)
+        self.history_table.setColumnWidth(0, 150)  # Time
+        self.history_table.setColumnWidth(1, 200)  # Source
+        self.history_table.setColumnWidth(2, 200)  # Target
+        self.history_table.setColumnWidth(3, 60)   # Status
         self.history_table.setMaximumHeight(200)
         self.history_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.history_table.customContextMenuRequested.connect(self.show_history_table_context_menu)
@@ -771,7 +830,11 @@ class SymlinkMainWindow(QMainWindow):
         self.most_used_targets_table = QTableWidget()
         self.most_used_targets_table.setColumnCount(2)
         self.most_used_targets_table.setHorizontalHeaderLabels(['Path', 'Count'])
-        self.most_used_targets_table.horizontalHeader().setStretchLastSection(True)
+        hdr = self.most_used_targets_table.horizontalHeader()
+        hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        hdr.setStretchLastSection(True)
+        self.most_used_targets_table.setColumnWidth(0, 300)  # Path
+        self.most_used_targets_table.setColumnWidth(1, 80)   # Count
         
         layout.addWidget(self.most_used_targets_table)
         
@@ -795,7 +858,11 @@ class SymlinkMainWindow(QMainWindow):
         self.most_used_sources_table = QTableWidget()
         self.most_used_sources_table.setColumnCount(2)
         self.most_used_sources_table.setHorizontalHeaderLabels(['Source Path', 'Count'])
-        self.most_used_sources_table.horizontalHeader().setStretchLastSection(True)
+        hdr = self.most_used_sources_table.horizontalHeader()
+        hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        hdr.setStretchLastSection(True)
+        self.most_used_sources_table.setColumnWidth(0, 300)  # Source Path
+        self.most_used_sources_table.setColumnWidth(1, 80)   # Count
         
         sources_layout.addWidget(self.most_used_sources_table)
         sources_group.setLayout(sources_layout)
@@ -811,7 +878,11 @@ class SymlinkMainWindow(QMainWindow):
         self.most_used_targets_table = QTableWidget()
         self.most_used_targets_table.setColumnCount(2)
         self.most_used_targets_table.setHorizontalHeaderLabels(['Target Path', 'Count'])
-        self.most_used_targets_table.horizontalHeader().setStretchLastSection(True)
+        hdr = self.most_used_targets_table.horizontalHeader()
+        hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        hdr.setStretchLastSection(True)
+        self.most_used_targets_table.setColumnWidth(0, 300)  # Target Path
+        self.most_used_targets_table.setColumnWidth(1, 80)   # Count
         
         targets_layout.addWidget(self.most_used_targets_table)
         targets_group.setLayout(targets_layout)
@@ -840,7 +911,7 @@ class SymlinkMainWindow(QMainWindow):
         theme_layout.addWidget(theme_label)
         
         self.theme_combo = QComboBox()
-        self.theme_combo.addItems(['Dark', 'Light', 'Monokai', 'Pastel Pink'])
+        self.theme_combo.addItems(['Dark', 'Light', 'Monokai', 'Pastel Pink', 'Pastel Blue', 'Pastel Green', 'Pastel Orange'])
         current_theme = self.settings_manager.get_setting('theme', 'dark')
         # Map internal theme names to display names
         theme_display_map = {
@@ -848,6 +919,9 @@ class SymlinkMainWindow(QMainWindow):
             'light': 'Light',
             'monokai': 'Monokai',
             'pastel_pink': 'Pastel Pink',
+            'pastel_blue': 'Pastel Blue',
+            'pastel_green': 'Pastel Green',
+            'pastel_orange': 'Pastel Orange',
         }
         self.theme_combo.setCurrentText(theme_display_map.get(current_theme, 'Dark'))
         self.theme_combo.currentTextChanged.connect(self.change_theme)
@@ -891,7 +965,7 @@ class SymlinkMainWindow(QMainWindow):
         info_text.setWordWrap(True)
         info_text.setStyleSheet("font-size: 10pt; line-height: 1.5;")
         info_text.setText(
-            f"<b>Symlink Manager v1.1.2</b><br>"
+            f"<b>Symlink Manager v2.0.0</b><br>"
             f"<b>Platform:</b> {self.get_platform_name()}<br>"
             f"<b>Python:</b> {sys.version.split()[0]}"
         )
@@ -1023,6 +1097,11 @@ class SymlinkMainWindow(QMainWindow):
             source, target, relative, force, admin
         )
         
+        # Handle admin-required response
+        if not success and message == "ADMIN_REQUIRED":
+            self._offer_admin_relaunch()
+            return
+        
         # Record in history
         self.settings_manager.record_creation(source, target, success, message)
         
@@ -1041,6 +1120,22 @@ class SymlinkMainWindow(QMainWindow):
         
         self.refresh_history()
     
+    def _offer_admin_relaunch(self):
+        """Offer to relaunch the app as administrator."""
+        if not self.symlink_manager.is_windows():
+            return
+        reply = QMessageBox.question(
+            self,
+            "Administrator Privileges Required",
+            "Creating symlinks on Windows requires administrator privileges.\n\n"
+            "Do you want to restart the application as administrator?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.save_window_geometry()
+            self.tray_icon.cleanup()
+            self.symlink_manager.relaunch_as_admin()
+    
     def clear_inputs(self):
         """Clear input fields."""
         self.source_input.clear()
@@ -1058,8 +1153,8 @@ class SymlinkMainWindow(QMainWindow):
         
         for row, creation in enumerate(creations):
             time_item = QTableWidgetItem(creation['timestamp'][:19])
-            source_item = QTableWidgetItem(creation['source'][-40:] if len(creation['source']) > 40 else creation['source'])
-            target_item = QTableWidgetItem(creation['target'][-40:] if len(creation['target']) > 40 else creation['target'])
+            source_item = QTableWidgetItem(creation['source'])
+            target_item = QTableWidgetItem(creation['target'])
             status = "✓" if creation['success'] else "✗"
             status_item = QTableWidgetItem(status)
             
@@ -1075,8 +1170,7 @@ class SymlinkMainWindow(QMainWindow):
         self.most_used_targets_table.setRowCount(len(most_used_targets))
         
         for row, (target, count) in enumerate(most_used_targets):
-            path = target[-50:] if len(target) > 50 else target
-            target_item = QTableWidgetItem(path)
+            target_item = QTableWidgetItem(target)
             count_item = QTableWidgetItem(str(count))
             
             self.most_used_targets_table.setItem(row, 0, target_item)
@@ -1104,6 +1198,9 @@ class SymlinkMainWindow(QMainWindow):
             'Light': 'light',
             'Monokai': 'monokai',
             'Pastel Pink': 'pastel_pink',
+            'Pastel Blue': 'pastel_blue',
+            'Pastel Green': 'pastel_green',
+            'Pastel Orange': 'pastel_orange',
         }
         theme = theme_map.get(theme_name, 'dark')
         self.settings_manager.set_setting('theme', theme)
@@ -1113,7 +1210,23 @@ class SymlinkMainWindow(QMainWindow):
         """Load and apply saved settings."""
         geometry = self.settings_manager.get_setting('window_geometry')
         if geometry:
-            self.resize(geometry.get('width', 650), geometry.get('height', 420))
+            w = geometry.get('width', 650)
+            h = geometry.get('height', 420)
+            x = geometry.get('x')
+            y = geometry.get('y')
+            if x is not None and y is not None:
+                self.setGeometry(x, y, w, h)
+            else:
+                self.resize(w, h)
+            # Defer maximize until the window is shown (avoid flash)
+            self._pending_maximize = geometry.get('maximized', False)
+
+    def showEvent(self, event):
+        """Restore maximized state after the window is first shown."""
+        super().showEvent(event)
+        if self._pending_maximize:
+            self._pending_maximize = False
+            self.showMaximized()
     
     def closeEvent(self, event):
         """Handle window close event."""

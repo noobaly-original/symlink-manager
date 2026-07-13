@@ -1,73 +1,65 @@
-# Release Notes — Symlink Manager v1.1.2
+# Release Notes — Symlink Manager v2.0.0
 
-**Release date:** July 12, 2026
+**Release date:** July 13, 2026
 
 ---
 
 ## Overview
 
-Symlink Manager v1.1.2 is a stability release that fixes a shutdown crash related to the system tray icon and ensures the application exits properly when "Minimize to tray" is disabled.
+Symlink Manager v2.0.0 is a major feature release introducing batch symlink creation, three new pastel themes, PyInstaller bundle compatibility for elevation features, UIPI drag-and-drop support for admin mode, and numerous UI refinements.
 
 ---
 
-## Features
+## New in v2.0.0
 
-### Symlink Creation
-- Create symlinks for files and directories
-- Cross-platform support (Windows, macOS, Linux)
-- Drag-and-drop path input
-- Path validation before creation
-- Relative symlink support for portable structures
-- Force mode to overwrite existing targets
-- Windows Admin mode for system-protected directories
-- Optional confirmation dialog
+### Batch Operations
+- **Batch symlink creation** — new **Batch** tab with ability to create multiple symlinks from:
+  - A CSV file (columns: source, target, optional relative/force flags)
+  - A manually populated list within the UI
+  - Progress tracking with success/ failure indicators per operation
+  - Admin checkbox for batch operations when elevation is needed
 
-### Symlink Management
-- Automatic tracking of all created symlinks
-- View, edit notes, verify status, and delete symlinks
-- Status indicators: Active, Broken, Missing, Inactive
-- Right-click context menu to copy paths
+### New Themes
+- **Pastel Blue** — light theme with soft blue tones and navy accents
+- **Pastel Green** — light theme with soft green tones and forest accents
+- **Pastel Orange** — light theme with warm peach tones and brown accents
+- Combined with existing Dark, Light, Monokai, and Pastel Pink for a total of **7 themes**
 
-### History & Statistics
-- Timestamped creation history (last 200 records)
-- Most-used source and target path tracking
-- Persistent storage across sessions
+### PyInstaller Bundle Compatibility
+- **`relaunch_as_admin()`** — now detects PyInstaller bundles and passes the correct arguments (`None` for .exe, script path for dev mode)
+- **`StartupManager._get_launch_command()`** — new helper returning `(executable, args_list)` appropriate for bundled vs. script mode, used on all platforms (Windows, macOS, Linux)
+- **`mklink` subprocess calls** — changed to `shell=True` because `mklink` is a `cmd.exe` internal command
+- **`symlink_app.spec`** — all custom modules added to `hiddenimports`
 
-### User Interface
-- **Custom frameless window** — native OS title bar replaced with a modern, theme-aware custom title bar with minimize, maximize/restore, and close buttons
-- **Drag to move** — click and drag the title bar to move the window; drag out of maximized state to restore and reposition
-- **Edge resize** — 6px invisible resize border on all edges and corners
-- **Pastel Pink theme** — new light theme with soft pink tones
-- Dark, Light, Monokai, and Pastel Pink themes
-- Window size and position memory
-- Drag-and-drop support for both source and target fields
+### UIPI Drag-and-Drop Support (Admin Mode)
+- When running elevated on Windows, **UIPI (User Interface Privilege Isolation)** previously blocked drag-and-drop from non-elevated Explorer
+- **Process-wide fix** via `_patch_uipi_for_drag_drop()` in `app.py` — calls `ChangeWindowMessageFilter()` before any windows are created
+- **Per-window fix** via `_patch_uipi_for_window()` in `main_window.py` — calls `ChangeWindowMessageFilterEx()` on the window's HWND
 
-### System Tray
-- Cross-platform tray icon with simplified "Open" and "Close" menu
-- Double-click tray icon to restore the main window
-- Fixes crash on right-click menu
-- Fixes `TypeError` on shutdown related to `ActivationReason` enum conversion
-- Proper cleanup of tray icon signals during application exit
+### UI Improvements
+- **Full path display** — Manage, History, and Statistics tables now show full paths without truncation; Qt handles ellipsis clipping via column resize modes
+- **Interactive column resizing** — all table columns are draggable (`Interactive` resize mode) with sensible initial widths
+- **Window geometry memory** — now saves and restores window position (x, y) and maximized state alongside size
+- **Theme combo hover** — combo box dropdown items now correctly use the active theme's accent color instead of the system default (pink)
 
-### Autostart
-- **Start on system login** option in Settings
-- Cross-platform implementation:
-  - Windows: `.lnk` shortcut in Startup folder
-  - macOS: `.plist` LaunchAgent loaded via `launchctl`
-  - Linux: `.desktop` file in `~/.config/autostart/`
-- When launched via autostart, the app starts **minimized to tray** with a notification
-
----
-
-## Known Limitations
-
-1. **Relative symlinks on Windows** — May not work reliably across different drives.
-2. **Admin privileges** — Some Windows directories (e.g. `System32`, `Program Files`) require elevation.
-3. **Bundle size** — Standalone executable is ~150–200 MB due to bundled Python and Qt.
+### General
+- Updated version to 2.0.0
+- Updated `build_executable.py`, `symlink_app.spec`, and build scripts for compatibility
 
 ---
 
 ## Changelog
+
+### v2.0.0 (July 13, 2026)
+- **Major feature:** Batch symlink creation — new `batch_operations_widget.py` module with CSV and list-based batch creation
+- **New themes:** Pastel Blue, Pastel Green, Pastel Orange — three new light themes (7 total)
+- **PyInstaller compatibility:** `relaunch_as_admin()` and `StartupManager` now detect frozen bundles; `mklink` calls use `shell=True`; all modules added to `hiddenimports`
+- **UIPI fix:** Drag-and-drop now works when running as admin on Windows — process-wide and per-window message filter patching
+- **UI fix:** Combo box dropdown hover highlight now matches the active theme's accent color
+- **UI fix:** Manage, History, and Statistics tables show full paths without slicing truncation
+- **UI fix:** All table columns now have interactive resize mode with sensible initial widths
+- **UI improvement:** Window geometry now saves/restores position (x, y) and maximized state
+- **Updated version:** v1.1.2 → v2.0.0
 
 ### v1.1.2 (July 12, 2026)
 - **Bug fix:** Fixed `TypeError: unable to convert a C++ 'QSystemTrayIcon::ActivationReason' instance to a Python object` on shutdown
@@ -116,74 +108,3 @@ Symlink Manager v1.1.2 is a stability release that fixes a shutdown crash relate
 - Symlink tracking, notes, verification, and deletion
 - Creation history and most-used statistics
 - Standalone executable builds via PyInstaller
-
----
-
-## File Structure
-
-```
-symlink-manager/
-├── app.py                  # Entry point
-├── main_window.py          # UI components and event handlers
-├── symlink_manager.py      # Core symlink creation/removal logic
-├── settings_manager.py     # Settings, history, and symlink tracking
-├── drag_drop_widgets.py    # Drag-and-drop QLineEdit widget
-├── tray_icon.py            # System tray icon implementation
-├── title_bar.py            # Custom frameless title bar widget
-├── startup_manager.py      # Cross-platform autostart registration
-├── ui_styles.py            # Theme stylesheets
-├── build_executable.py     # PyInstaller build automation
-├── symlink_app.spec        # PyInstaller specification
-├── build.sh / build.bat    # Convenience build scripts
-├── requirements.txt        # Python dependencies
-├── README.md               # User guide
-├── BUILD_GUIDE.md          # Build instructions
-├── RELEASE_NOTES.md        # This file
-└── SYMLINK_MANAGEMENT.md   # Symlink tracking reference
-```
-
----
-
-## Configuration
-
-Settings and data are stored as JSON in:
-
-| Platform | Directory |
-|---|---|
-| **Windows** | `%APPDATA%\SymlinkApp\` |
-| **macOS / Linux** | `~/.config/symlink_app/` |
-
-| File | Purpose |
-|---|---|
-| `settings.json` | Window geometry, theme, last-used directories, minimize-to-tray, autostart |
-| `history.json` | Creation records and recently used paths |
-| `managed_symlinks.json` | Tracked symlinks with notes |
-
----
-
-## Security
-
-- All paths are validated before any operation.
-- The app only creates symlinks — it never deletes or modifies source files.
-- No network access required.
-- Settings are stored in the user's home directory only.
-
----
-
-## Future Roadmap
-
-Potential features for future releases:
-- [ ] Batch symlink creation
-- [ ] Command-line interface (CLI)
-- [ ] Automatic dark mode detection
-- [ ] Custom icon selection for symlinks
-- [ ] Undo / redo support
-- [ ] Network / remote symlink support
-
----
-
-## Support
-
-- **Build issues:** See [BUILD_GUIDE.md](BUILD_GUIDE.md)
-- **Usage questions:** See [README.md](README.md)
-- **Logs:** Check the config directory for application logs

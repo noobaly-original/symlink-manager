@@ -22,6 +22,21 @@ class StartupManager:
     APP_NAME = "SymlinkManager"
 
     @staticmethod
+    def _get_launch_command() -> tuple:
+        """Return (executable, args_list) appropriate for the current runtime.
+        
+        When running as a PyInstaller bundle, sys.executable is the .exe itself
+        and needs no script argument. In script mode, the Python interpreter
+        needs the script path as an argument.
+        """
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            # PyInstaller bundle — the .exe is self-contained
+            return sys.executable, []
+        else:
+            # Running as Python script
+            return sys.executable, [str(Path(sys.argv[0]).absolute())]
+
+    @staticmethod
     def is_startup_enabled() -> bool:
         """Check if the app is registered to start on login."""
         system = platform.system()
@@ -80,15 +95,20 @@ class StartupManager:
     def _enable_startup_windows() -> bool:
         """Create a shortcut in the Windows Startup folder using a VBScript helper."""
         shortcut_path = StartupManager._shortcut_path_windows()
-        target = sys.executable
-        args = f'"{Path(sys.argv[0]).absolute()}"'
+        executable, args = StartupManager._get_launch_command()
+        target = executable
+
+        if args:
+            args_str = f'"{args[0]}"'
+        else:
+            args_str = ""
 
         # Use a VBScript to create the shortcut (most reliable method without pywin32)
         vbs_code = f'''
 Set ws = CreateObject("WScript.Shell")
 Set sc = ws.CreateShortcut("{shortcut_path}")
 sc.TargetPath = "{target}"
-sc.Arguments = "{args}"
+sc.Arguments = "{args_str}"
 sc.WorkingDirectory = "{Path(sys.argv[0]).parent}"
 sc.Description = "Symlink Manager"
 sc.Save
@@ -134,8 +154,12 @@ sc.Save
         plist_dir = StartupManager._launch_agents_dir()
         plist_dir.mkdir(parents=True, exist_ok=True)
 
-        executable = sys.executable
-        script = str(Path(sys.argv[0]).absolute())
+        executable, args = StartupManager._get_launch_command()
+
+        # Build ProgramArguments array
+        prog_args = f"        <string>{executable}</string>\n"
+        for arg in args:
+            prog_args += f"        <string>{arg}</string>\n"
 
         plist_content = f'''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -146,9 +170,7 @@ sc.Save
     <string>{StartupManager.APP_NAME}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{executable}</string>
-        <string>{script}</string>
-    </array>
+{prog_args}    </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -198,13 +220,16 @@ sc.Save
         autostart_dir = StartupManager._autostart_dir()
         autostart_dir.mkdir(parents=True, exist_ok=True)
 
-        executable = sys.executable
-        script = str(Path(sys.argv[0]).absolute())
+        executable, args = StartupManager._get_launch_command()
+        if args:
+            exec_line = f"{executable} {' '.join(args)}"
+        else:
+            exec_line = executable
 
         desktop_content = f"""[Desktop Entry]
 Type=Application
 Name=Symlink Manager
-Exec={executable} {script}
+Exec={exec_line}
 Comment=Manage symbolic links
 X-GNOME-Autostart-enabled=true
 """
