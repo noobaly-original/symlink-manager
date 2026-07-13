@@ -65,6 +65,7 @@ class SymlinkMainWindow(QMainWindow):
         self._drag_start_pos = None
         self._drag_start_geo = None
         self._pending_maximize = False
+        self._missing_symlinks_prompted = False
         
         self.initUI()
         self.load_settings()
@@ -502,23 +503,38 @@ class SymlinkMainWindow(QMainWindow):
             self.refresh_symlinks_table()
     
     def refresh_symlinks_table(self):
-        """Refresh the symlinks table and handle missing symlinks."""
+        """Refresh the symlinks table and handle missing symlinks (once per session)."""
         # Verify all symlinks to get current status
         status = self.settings_manager.verify_symlinks()
         
-        # Find and handle missing symlinks
+        # Find and handle missing symlinks (prompt only once per session)
         missing_links = [link for link in status['symlinks'] if link['status'] == 'missing']
         
-        if missing_links:
-            # Ask user if they want to remove missing symlinks
+        if missing_links and not self._missing_symlinks_prompted:
+            self._missing_symlinks_prompted = True
             missing_paths = '\n'.join([link['target'] for link in missing_links])
-            reply = QMessageBox.question(
-                self,
-                "Missing Symlinks Detected",
-                f"The following symlinks are missing:\n\n{missing_paths}\n\nRemove them from the manager?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes
+            
+            persist_active = self.settings_manager.get_setting('persist_symlinks', False)
+            persist_note = (
+                "\n\nPersistence is enabled — missing symlinks will be automatically "
+                "recreated in the background." if persist_active else
+                "\n\nTip: Enable 'Persist symlinks' in Settings to automatically "
+                "recreate missing symlinks in the background."
             )
+            
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Missing Symlinks Detected")
+            msg_box.setText(
+                f"The following symlinks are missing:\n\n{missing_paths}"
+                f"{persist_note}\n\n"
+                f"Remove them from the manager?"
+            )
+            msg_box.setStandardButtons(
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            msg_box.setDefaultButton(QMessageBox.StandardButton.Yes)
+            
+            reply = msg_box.exec()
             
             if reply == QMessageBox.StandardButton.Yes:
                 for link in missing_links:
