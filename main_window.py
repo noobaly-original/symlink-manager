@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QCheckBox, QFileDialog, QMessageBox,
     QTabWidget, QListWidget, QListWidgetItem, QComboBox, QTableWidget,
     QTableWidgetItem, QDialog, QScrollArea, QFormLayout, QStatusBar, QMenu,
-    QApplication, QHeaderView
+    QApplication, QHeaderView, QSpinBox
 )
 from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSignal, QMimeData
 from PyQt6.QtGui import QIcon, QFont, QColor
@@ -71,11 +71,12 @@ class SymlinkMainWindow(QMainWindow):
 
         # Persistence timer — periodically checks and recreates missing symlinks
         self._persist_timer = QTimer(self)
-        self._persist_timer.setInterval(60_000)  # every 60 seconds
+        interval = self.settings_manager.get_setting('persistence_interval', 60) * 1000
+        self._persist_timer.setInterval(interval)
         self._persist_timer.timeout.connect(self._run_persistence_check)
         if self.settings_manager.get_setting('persist_symlinks', False):
             self._persist_timer.start()
-            logging.info("Persistence timer started (interval=60s)")
+            logging.info(f"Persistence timer started (interval={interval//1000}s)")
         
     def showEvent(self, event):
         """Restore maximized state after the window is first shown."""
@@ -894,17 +895,17 @@ class SymlinkMainWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
-        
-        # Theme selection
-        theme_layout = QHBoxLayout()
+
+        # ========== Theme ==========
+        theme_group = QGroupBox("Appearance")
+        theme_inner = QHBoxLayout()
         theme_label = QLabel("Theme:")
         theme_label.setStyleSheet("font-weight: bold;")
-        theme_layout.addWidget(theme_label)
-        
+        theme_inner.addWidget(theme_label)
+
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(['Dark', 'Light', 'Monokai', 'Pastel Pink', 'Pastel Blue', 'Pastel Green', 'Pastel Orange'])
         current_theme = self.settings_manager.get_setting('theme', 'dark')
-        # Map internal theme names to display names
         theme_display_map = {
             'dark': 'Dark',
             'light': 'Light',
@@ -918,21 +919,22 @@ class SymlinkMainWindow(QMainWindow):
         self.theme_combo.currentTextChanged.connect(self.change_theme)
         self.theme_combo.setMinimumWidth(100)
         self.theme_combo.setMaximumWidth(150)
-        theme_layout.addWidget(self.theme_combo)
-        theme_layout.addStretch()
-        layout.addLayout(theme_layout)
-        
-        # System tray settings
+        theme_inner.addWidget(self.theme_combo)
+        theme_inner.addStretch()
+        theme_group.setLayout(theme_inner)
+        layout.addWidget(theme_group)
+
+        # ========== System Tray ==========
         tray_group = QGroupBox("System Tray")
         tray_layout = QVBoxLayout()
-        
+
         self.minimize_to_tray_checkbox = QCheckBox("Minimize to system tray on close")
         self.minimize_to_tray_checkbox.setChecked(
             self.settings_manager.get_setting('minimize_to_tray', True)
         )
         self.minimize_to_tray_checkbox.toggled.connect(self._on_minimize_to_tray_toggled)
         tray_layout.addWidget(self.minimize_to_tray_checkbox)
-        
+
         self.start_on_login_checkbox = QCheckBox("Start on system login (minimized to tray)")
         self.start_on_login_checkbox.setChecked(
             self.settings_manager.get_setting('start_on_login', False)
@@ -940,36 +942,72 @@ class SymlinkMainWindow(QMainWindow):
         self.start_on_login_checkbox.toggled.connect(self._on_start_on_login_toggled)
         tray_layout.addWidget(self.start_on_login_checkbox)
 
+        tray_info = QLabel(
+            "When enabled, closing the window will minimize it to the system tray "
+            "instead of quitting the application. Use the tray icon to show or quit."
+        )
+        tray_info.setWordWrap(True)
+        tray_info.setStyleSheet("font-size: 9pt; color: #888;")
+        tray_layout.addWidget(tray_info)
+
+        tray_group.setLayout(tray_layout)
+        layout.addWidget(tray_group)
+
+        # ========== Persistence & Merge ==========
+        pm_group = QGroupBox("Persistence & Merge")
+        pm_layout = QVBoxLayout()
+
         self.persist_symlinks_checkbox = QCheckBox("Persist symlinks — automatically recreate missing symlinks")
         self.persist_symlinks_checkbox.setChecked(
             self.settings_manager.get_setting('persist_symlinks', False)
         )
         self.persist_symlinks_checkbox.toggled.connect(self._on_persist_symlinks_toggled)
-        tray_layout.addWidget(self.persist_symlinks_checkbox)
+        pm_layout.addWidget(self.persist_symlinks_checkbox)
+
+        # Interval spin row
+        interval_layout = QHBoxLayout()
+        interval_layout.setContentsMargins(24, 0, 0, 0)  # indent under checkbox
+        interval_label = QLabel("Check interval (seconds):")
+        interval_label.setStyleSheet("font-size: 9pt;")
+        interval_layout.addWidget(interval_label)
+
+        self.persist_interval_spin = QSpinBox()
+        self.persist_interval_spin.setRange(10, 3600)
+        self.persist_interval_spin.setSuffix(" s")
+        self.persist_interval_spin.setValue(
+            self.settings_manager.get_setting('persistence_interval', 60)
+        )
+        self.persist_interval_spin.valueChanged.connect(self._on_persistence_interval_changed)
+        self.persist_interval_spin.setMinimumWidth(80)
+        self.persist_interval_spin.setMaximumWidth(100)
+        interval_layout.addWidget(self.persist_interval_spin)
+        interval_layout.addStretch()
+        pm_layout.addLayout(interval_layout)
 
         self.merge_management_checkbox = QCheckBox("Merge management — merge source into symlink folder before recreating")
         self.merge_management_checkbox.setChecked(
             self.settings_manager.get_setting('merge_management', False)
         )
         self.merge_management_checkbox.toggled.connect(self._on_merge_management_toggled)
-        tray_layout.addWidget(self.merge_management_checkbox)
-        
-        tray_info = QLabel(
-            "When enabled, closing the window will minimize it to the system tray "
-            "instead of quitting the application. Use the tray icon to show or quit.\n\n"
-            "Persistence checks all tracked symlinks every 60 seconds and "
-            "automatically recreates any that are missing.\n\n"
-            "Merge management copies source directory contents into the symlink's "
-            "folder before recreating the symlink (newer files override)."
+        pm_layout.addWidget(self.merge_management_checkbox)
+
+        pm_info = QLabel(
+            "Persistence checks all tracked symlinks every N seconds and automatically "
+            "recreates any that are missing. Duplicate target paths are silently skipped.\n\n"
+            "Merge management scans the symlink's parent directory for items not present "
+            "in the source. These items are copied into the source, removed from the target, "
+            "and replaced with new symlinks. Duplicate resolved paths are silently ignored."
         )
-        tray_info.setWordWrap(True)
-        tray_info.setStyleSheet("font-size: 9pt; color: #888;")
-        tray_layout.addWidget(tray_info)
-        
-        tray_group.setLayout(tray_layout)
-        layout.addWidget(tray_group)
-        
-        # Information
+        pm_info.setWordWrap(True)
+        pm_info.setStyleSheet("font-size: 9pt; color: #888;")
+        pm_layout.addWidget(pm_info)
+
+        pm_group.setLayout(pm_layout)
+        layout.addWidget(pm_group)
+
+        # ========== Information ==========
+        info_group = QGroupBox("About")
+        info_layout = QVBoxLayout()
         info_text = QLabel()
         info_text.setWordWrap(True)
         info_text.setStyleSheet("font-size: 10pt; line-height: 1.5;")
@@ -978,8 +1016,10 @@ class SymlinkMainWindow(QMainWindow):
             f"<b>Platform:</b> {self.get_platform_name()}<br>"
             f"<b>Python:</b> {sys.version.split()[0]}"
         )
-        layout.addWidget(info_text)
-        
+        info_layout.addWidget(info_text)
+        info_group.setLayout(info_layout)
+        layout.addWidget(info_group)
+
         layout.addStretch()
         widget.setLayout(layout)
         return widget
@@ -1009,13 +1049,22 @@ class SymlinkMainWindow(QMainWindow):
         """Handle persist-symlinks checkbox toggle."""
         self.settings_manager.set_setting('persist_symlinks', checked)
         if checked:
+            interval = self.settings_manager.get_setting('persistence_interval', 60) * 1000
+            self._persist_timer.setInterval(interval)
             self._persist_timer.start()
-            logging.info("Persistence enabled — timer started (interval=60s)")
+            logging.info(f"Persistence enabled — timer started (interval={interval//1000}s)")
             # Run an immediate check so the user sees the effect right away
             self._run_persistence_check()
         else:
             self._persist_timer.stop()
             logging.info("Persistence disabled — timer stopped")
+
+    def _on_persistence_interval_changed(self, seconds: int):
+        """Handle persistence interval spinbox change."""
+        self.settings_manager.set_setting('persistence_interval', seconds)
+        if self._persist_timer.isActive():
+            self._persist_timer.setInterval(seconds * 1000)
+            logging.info(f"Persistence interval changed to {seconds}s")
 
     def _on_symlinks_table_item_changed(self, item: QTableWidgetItem):
         """Handle changes in the symlinks table (e.g. Merge checkbox toggle)."""
@@ -1306,11 +1355,18 @@ class SymlinkMainWindow(QMainWindow):
         # ---- Phase 1: Merge (per-source, collects batch operations) ----
         batch_ops = []       # (source, target, is_dir, force, relative, admin)
         merge_tracked = []   # new sub-symlinks to track after batch
+        seen_targets = set() # silently ignore duplicate target paths
         needs_admin = False
 
         for entry in missing:
             source = entry['source']
             target = entry['target']
+
+            # Silently skip if we've already queued this target
+            if target in seen_targets:
+                continue
+            seen_targets.add(target)
+
             try:
                 source_path = Path(source)
                 # Per-source merge: only merge if the source directory has merge enabled

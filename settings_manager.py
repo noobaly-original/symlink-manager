@@ -62,6 +62,7 @@ class SettingsManager:
             'start_on_login': False,
             'persist_symlinks': False,
             'merge_management': False,
+            'persistence_interval': 60,
         }
     
     def _load_history(self) -> Dict[str, List[str]]:
