@@ -556,7 +556,7 @@ class SymlinkMainWindow(QMainWindow):
         self.symlinks_table.setColumnWidth(3, 150)  # Notes
         self.symlinks_table.setColumnWidth(4, 90)   # Created
         self.symlinks_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.symlinks_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.symlinks_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.symlinks_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.symlinks_table.customContextMenuRequested.connect(self.show_manage_table_context_menu)
         
@@ -690,47 +690,53 @@ class SymlinkMainWindow(QMainWindow):
         self.symlinks_status_label.setText(status_text)
     
     def edit_symlink_notes(self):
-        """Edit notes for selected symlink."""
-        current_row = self.symlinks_table.currentRow()
+        """Edit notes for selected symlinks."""
+        selected_rows = set()
+        for item in self.symlinks_table.selectedItems():
+            selected_rows.add(item.row())
         
-        if current_row < 0:
-            QMessageBox.warning(self, "No Selection", "Please select a symlink to edit.")
+        if not selected_rows:
+            QMessageBox.warning(self, "No Selection", "Please select at least one symlink to edit.")
             return
         
-        target = self.symlinks_table.item(current_row, 0).data(Qt.ItemDataRole.UserRole)
-        symlink = self.settings_manager.get_symlink_by_target(target)
+        # Collect targets from selected rows
+        targets = []
+        for row in sorted(selected_rows):
+            t = self.symlinks_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+            if t:
+                targets.append(t)
         
-        if not symlink:
-            QMessageBox.warning(self, "Error", "Symlink not found.")
+        if not targets:
             return
+        
+        # Use the first target to fetch existing notes
+        first_symlink = self.settings_manager.get_symlink_by_target(targets[0])
+        existing_notes = first_symlink.get('notes', '') if first_symlink else ''
         
         # Create edit dialog
         dialog = QDialog(self)
-        dialog.setWindowTitle("Edit Symlink Notes")
-        dialog.setMinimumWidth(400)
+        dialog.setWindowTitle(f"Edit Notes — {len(targets)} symlink(s)")
+        dialog.setMinimumWidth(450)
         
         layout = QVBoxLayout()
         
-        # Target info
-        info_label = QLabel(f"Target: {target}")
+        info_label = QLabel(f"Applying notes to {len(targets)} symlink(s):")
         info_label.setWordWrap(True)
         info_label.setStyleSheet("font-size: 9pt; color: #888;")
         layout.addWidget(info_label)
         
-        # Notes input
         notes_label = QLabel("Notes:")
         layout.addWidget(notes_label)
         
         notes_input = QLineEdit()
-        notes_input.setText(symlink.get('notes', ''))
-        notes_input.setPlaceholderText("Add notes about this symlink...")
+        notes_input.setText(existing_notes)
+        notes_input.setPlaceholderText("Add notes about these symlinks...")
         layout.addWidget(notes_input)
         
-        # Buttons
         button_layout = QHBoxLayout()
         
         save_btn = QPushButton("Save")
-        save_btn.clicked.connect(lambda: self.save_symlink_notes(dialog, target, notes_input.text()))
+        save_btn.clicked.connect(lambda: self._save_multi_symlink_notes(dialog, targets, notes_input.text()))
         button_layout.addWidget(save_btn)
         
         cancel_btn = QPushButton("Cancel")
@@ -739,50 +745,72 @@ class SymlinkMainWindow(QMainWindow):
         
         layout.addLayout(button_layout)
         dialog.setLayout(layout)
-        
         dialog.exec()
     
-    def save_symlink_notes(self, dialog: QDialog, target: str, notes: str):
-        """Save notes for a symlink."""
-        if self.settings_manager.update_symlink(target, notes=notes):
-            QMessageBox.information(self, "Success", "Notes saved successfully.")
+    def _save_multi_symlink_notes(self, dialog: QDialog, targets: list, notes: str):
+        """Save notes for multiple symlinks."""
+        success_count = 0
+        for t in targets:
+            if self.settings_manager.update_symlink(t, notes=notes):
+                success_count += 1
+        if success_count == len(targets):
+            QMessageBox.information(self, "Success", f"Notes saved for {success_count} symlink(s).")
             dialog.accept()
             self.refresh_symlinks_table()
         else:
-            QMessageBox.critical(self, "Error", "Failed to save notes.")
+            QMessageBox.critical(self, "Error", f"Saved notes for {success_count}/{len(targets)} symlink(s).")
     
     def delete_symlink(self):
-        """Delete selected symlink."""
-        current_row = self.symlinks_table.currentRow()
+        """Delete selected symlinks."""
+        selected_rows = set()
+        for item in self.symlinks_table.selectedItems():
+            selected_rows.add(item.row())
         
-        if current_row < 0:
-            QMessageBox.warning(self, "No Selection", "Please select a symlink to delete.")
+        if not selected_rows:
+            QMessageBox.warning(self, "No Selection", "Please select at least one symlink to delete.")
             return
         
-        target = self.symlinks_table.item(current_row, 0).data(Qt.ItemDataRole.UserRole)
+        # Collect targets from selected rows
+        targets = []
+        for row in sorted(selected_rows):
+            t = self.symlinks_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+            if t:
+                targets.append(t)
         
-        # Confirmation dialog
+        if not targets:
+            return
+        
+        # Confirmation dialog with list
+        target_list = '\n'.join(targets[:15])
+        if len(targets) > 15:
+            target_list += f'\n... and {len(targets) - 15} more'
         reply = QMessageBox.question(
             self,
-            "Delete Symlink",
-            f"Delete symlink at:\n{target}\n\nThis will also remove the symlink from disk.",
+            f"Delete {len(targets)} Symlink(s)",
+            f"Delete the following {len(targets)} symlink(s)?\n\n{target_list}\n\nThis will also remove them from disk.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
         )
         
         if reply != QMessageBox.StandardButton.Yes:
             return
         
-        # Remove from disk
-        success, message = self.symlink_manager.remove_symlink(target)
+        # Remove each symlink
+        removed = 0
+        errors = 0
+        for target in targets:
+            success, message = self.symlink_manager.remove_symlink(target)
+            if success:
+                self.settings_manager.remove_symlink(target)
+                removed += 1
+            else:
+                errors += 1
+                logging.warning(f"Delete: failed to remove symlink '{target}': {message}")
         
-        if success:
-            # Remove from tracking
-            self.settings_manager.remove_symlink(target)
-            QMessageBox.information(self, "Success", f"Symlink deleted successfully.\n{message}")
-            self.statusBar().showMessage("Symlink deleted")
-            self.refresh_symlinks_table()
-        else:
-            QMessageBox.critical(self, "Error", f"Failed to delete symlink:\n{message}")
+        if removed:
+            QMessageBox.information(self, "Success", f"Deleted {removed} symlink(s).")
+            self.statusBar().showMessage(f"Deleted {removed} symlink(s)")
+        if errors:
+            QMessageBox.warning(self, "Warning", f"Failed to delete {errors} symlink(s).")
     
     def verify_all_symlinks(self):
         """Verify all tracked symlinks."""
