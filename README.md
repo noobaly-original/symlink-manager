@@ -175,6 +175,7 @@ All data is stored as JSON in a platform-specific directory:
 | **Drag & drop not working** | Your file manager must support standard MIME types. Works on Windows 7+, macOS 10.13+, and modern Linux desktops. If running as admin, the app automatically patches UIPI to allow drag-drop from non-elevated Explorer. |
 | **Autostart not working** | Try running the app as administrator (Windows) or check the autostart directory permissions (macOS/Linux). |
 
+NOTE: I have not done enough testing on other platforms between updates ! I would appreciate the feedback C:
 ---
 
 ## Project Structure
