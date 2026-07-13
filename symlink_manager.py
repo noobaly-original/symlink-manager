@@ -49,6 +49,35 @@ class SymlinkManager:
         return SymlinkManager._is_elevated
 
     @staticmethod
+    def _safe_remove_target(target_path: Path) -> Tuple[bool, str]:
+        """
+        Safely remove a target path — ONLY if it is a symlink.
+        Refuses to delete real files or directories to prevent accidental
+        data loss (e.g. rmdir on an important system folder).
+
+        Args:
+            target_path: The Path to remove.
+
+        Returns:
+            (success, message) tuple.
+        """
+        if not target_path.exists() and not target_path.is_symlink():
+            return True, "Target does not exist — nothing to remove."
+
+        if not target_path.is_symlink():
+            return False, (
+                f"Refusing to remove '{target_path}' — it is a real "
+                f"{'directory' if target_path.is_dir() else 'file'}, not a symlink. "
+                "Only symlinks can be force-removed."
+            )
+
+        try:
+            target_path.unlink()
+            return True, f"Removed existing symlink: {target_path}"
+        except Exception as e:
+            return False, f"Failed to remove symlink '{target_path}': {e}"
+
+    @staticmethod
     def run_mklink_batch(operations: List[Tuple[str, str, bool, bool]]) -> Tuple[bool, str]:
         """
         Windows only: build a temporary .bat file with mklink commands and
@@ -69,10 +98,14 @@ class SymlinkManager:
             tgt = target.replace('/', '\\')
             target_path = Path(target)
             if force and target_path.exists():
-                if target_path.is_dir() and not target_path.is_symlink():
-                    lines.append(f'rmdir "{tgt}" 2>nul')
+                if target_path.is_symlink():
+                    if target_path.is_dir():
+                        lines.append(f'rmdir "{tgt}" 2>nul')
+                    else:
+                        lines.append(f'del "{tgt}" 2>nul')
                 else:
-                    lines.append(f'del "{tgt}" 2>nul')
+                    # Safety: refuse to remove real files/directories in batch mode
+                    lines.append(f'echo SKIP,{i} — "{tgt}" is a real file/dir, not a symlink')
             lines.append(f'echo OP,{i},src="{src}",tgt="{tgt}"')
             if is_dir:
                 lines.append(f'mklink /D "{tgt}" "{src}"')
@@ -136,16 +169,22 @@ call "{batch_path}" > "{log_path}" 2>&1
 
             # Parse results
             failures = 0
+            skips = 0
             total = len(operations)
             if log_path.exists():
                 log_text = log_path.read_text(encoding="utf-8", errors="replace")
                 for l in log_text.splitlines():
-                    if not l.startswith("if errorlevel") and not l.startswith("FAIL"):
-                        logging.info(l)
-                    else:
+                    if l.startswith("SKIP,"):
+                        skips += 1
                         logging.warning(l)
+                    elif l.startswith("FAIL,"):
+                        logging.warning(l)
+                    else:
+                        logging.info(l)
                 for line in log_text.splitlines():
                     if line.startswith("FAIL,"):
+                        failures += 1
+                    elif line.startswith("SKIP,"):
                         failures += 1
 
             # Cleanup
@@ -194,10 +233,11 @@ call "{batch_path}" > "{log_path}" 2>&1
                 target_path = Path(target)
 
                 if force and (target_path.exists() or target_path.is_symlink()):
-                    if target_path.is_dir() and not target_path.is_symlink():
-                        os.rmdir(str(target_path))
-                    else:
-                        target_path.unlink()
+                    ok, msg = SymlinkManager._safe_remove_target(target_path)
+                    if not ok:
+                        results.append((source, target, False, msg))
+                        failures += 1
+                        continue
 
                 if SymlinkManager.is_windows():
                     # Use the battle-tested create_symlink logic which handles
@@ -325,13 +365,9 @@ call "{batch_path}" > "{log_path}" 2>&1
 
             # Remove existing target if force is set
             if force and target_path.exists():
-                try:
-                    if target_path.is_dir() and not target_path.is_symlink():
-                        os.rmdir(str(target_path))
-                    else:
-                        target_path.unlink()
-                except Exception as e:
-                    return False, f"Could not remove existing target: {e}"
+                ok, msg = SymlinkManager._safe_remove_target(target_path)
+                if not ok:
+                    return False, msg
 
             # If admin mode was requested and we're not already elevated,
             # skip straight to the .bat elevation approach
@@ -411,15 +447,9 @@ call "{batch_path}" > "{log_path}" 2>&1
             
             # Remove target if force is set and it exists
             if force and (target_path.exists() or target_path.is_symlink()):
-                try:
-                    if target_path.is_symlink():
-                        target_path.unlink()
-                    elif target_path.is_dir():
-                        os.rmdir(target)
-                    else:
-                        target_path.unlink()
-                except Exception as e:
-                    return False, f"Could not remove existing target: {e}"
+                ok, msg = SymlinkManager._safe_remove_target(target_path)
+                if not ok:
+                    return False, msg
             
             # Create the symlink
             try:

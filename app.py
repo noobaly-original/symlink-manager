@@ -4,6 +4,7 @@ Symlink Manager - Cross-platform GUI application for creating symlinks.
 """
 
 import sys
+import os
 import logging
 from pathlib import Path
 from PyQt6.QtWidgets import QApplication
@@ -12,10 +13,21 @@ from settings_manager import SettingsManager
 from startup_manager import StartupManager
 
 
+def get_log_path() -> Path:
+    """Get a cross-platform log file path."""
+    if sys.platform == 'win32':
+        base = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
+        log_dir = base / 'SymlinkApp'
+    else:
+        log_dir = Path.home() / '.config' / 'symlink_app'
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / 'symlmg.log'
+
+
 def setup_logging():
-    """Set up application logging to symlmg.log in the app root directory.
+    """Set up application logging to symlmg.log in a cross-platform config directory.
     The log file is truncated (cleared) on every app start."""
-    log_path = "./symlmg.log"
+    log_path = get_log_path()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
