@@ -4,6 +4,7 @@ dist/
 *.egg-info/
 *.egg/
 *.whl
+.wsl/
 
 # Python
 __pycache__/
