@@ -3,8 +3,6 @@ Batch operations widget for creating multiple symlinks at once.
 Supports drag-and-drop for source items and target directory.
 """
 
-import os
-import uuid
 from pathlib import Path
 from typing import List, Tuple
 
@@ -13,7 +11,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QCheckBox, QFileDialog, QMessageBox,
     QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem,
     QGroupBox, QHeaderView, QAbstractItemView, QProgressBar,
-    QSplitter, QFrame, QSizePolicy
+    QSplitter
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QColor
@@ -134,17 +132,28 @@ class BatchOperationsWidget(QWidget):
         options_layout.setSpacing(12)
 
         self.relative_checkbox = QCheckBox("Relative")
-        default_relative = self.settings_manager.get_setting('relative_by_default', False)
-        self.relative_checkbox.setChecked(default_relative)
+        self.relative_checkbox.setChecked(
+            self.settings_manager.get_setting('batch_relative', False)
+        )
+        self.relative_checkbox.toggled.connect(
+            lambda c: self.settings_manager.set_setting('batch_relative', c))
         options_layout.addWidget(self.relative_checkbox)
 
         self.force_checkbox = QCheckBox("Force")
+        self.force_checkbox.setChecked(
+            self.settings_manager.get_setting('batch_force', False)
+        )
+        self.force_checkbox.toggled.connect(
+            lambda c: self.settings_manager.set_setting('batch_force', c))
         options_layout.addWidget(self.force_checkbox)
 
         if self.symlink_manager.is_windows():
             self.admin_checkbox = QCheckBox("Admin")
-            # Admin mode only needed if Developer Mode is off and os.symlink fails
-            self.admin_checkbox.setChecked(False)
+            self.admin_checkbox.setChecked(
+                self.settings_manager.get_setting('batch_admin', False)
+            )
+            self.admin_checkbox.toggled.connect(
+                lambda c: self.settings_manager.set_setting('batch_admin', c))
             options_layout.addWidget(self.admin_checkbox)
         else:
             self.admin_checkbox = None
@@ -155,7 +164,11 @@ class BatchOperationsWidget(QWidget):
         options_layout.addWidget(self.confirm_checkbox)
 
         self.skip_errors_checkbox = QCheckBox("Skip errors (continue on failure)")
-        self.skip_errors_checkbox.setChecked(False)
+        self.skip_errors_checkbox.setChecked(
+            self.settings_manager.get_setting('batch_skip_errors', False)
+        )
+        self.skip_errors_checkbox.toggled.connect(
+            lambda c: self.settings_manager.set_setting('batch_skip_errors', c))
         options_layout.addWidget(self.skip_errors_checkbox)
 
         options_layout.addStretch()
@@ -539,6 +552,8 @@ class BatchOperationsWidget(QWidget):
             f"✗ Failed: {fail_count}\n"
             f"Total processed: {total}"
         )
+        self.operation_completed.emit("", success_count > 0,
+                                      f"Batch: {success_count} succeeded, {fail_count} failed")
 
     def _add_result(self, source: str, target: str, status: str, message: str):
         """Add a row to the results table."""

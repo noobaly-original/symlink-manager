@@ -3,20 +3,19 @@ Main application window for the Symlink Manager.
 """
 
 import sys
-import os
 import uuid
+import logging
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QLabel, QLineEdit, QPushButton, QCheckBox, QFileDialog, QMessageBox,
-    QTabWidget, QListWidget, QListWidgetItem, QComboBox, QTableWidget,
-    QTableWidgetItem, QDialog, QScrollArea, QFormLayout, QStatusBar, QMenu,
-    QApplication, QHeaderView
+    QTabWidget, QComboBox, QTableWidget,
+    QTableWidgetItem, QDialog, QStatusBar, QMenu,
+    QApplication, QHeaderView, QSpinBox
 )
-from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSignal, QMimeData
-from PyQt6.QtGui import QIcon, QFont, QColor
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QIcon, QFont
 from PyQt6.QtGui import QClipboard
-from PyQt6.QtCore import QThread
 
 from symlink_manager import SymlinkManager
 from settings_manager import SettingsManager
@@ -26,6 +25,96 @@ from batch_operations_widget import BatchOperationsWidget
 from tray_icon import TrayIcon
 from startup_manager import StartupManager
 from title_bar import TitleBar
+
+
+class MergeSettingsDialog(QDialog):
+    """Dialog for configuring merge source → target directory pairs."""
+
+    def __init__(self, settings_manager, parent=None):
+        super().__init__(parent)
+        self.settings_manager = settings_manager
+        self.setWindowTitle("Merge Settings")
+        self.setMinimumSize(550, 350)
+        self.setModal(True)
+        self._build_ui()
+        self._load_pairs()
+
+    def _build_ui(self):
+        layout = QVBoxLayout()
+
+        help_label = QLabel(
+            "Configure source and target directory pairs for merge operations.\n"
+            "When persistence runs, the target directory is scanned for files not\n"
+            "in the source. These files are moved to the source and symlinked back."
+        )
+        help_label.setWordWrap(True)
+        help_label.setStyleSheet("font-size: 9pt; color: #888; margin-bottom: 6px;")
+        layout.addWidget(help_label)
+
+        # Table
+        self.pairs_table = QTableWidget()
+        self.pairs_table.setColumnCount(3)
+        self.pairs_table.setHorizontalHeaderLabels(['Source Directory', 'Target Directory', ''])
+        hdr = self.pairs_table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.pairs_table.setColumnWidth(2, 60)
+        layout.addWidget(self.pairs_table)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        add_btn = QPushButton("+ Add Pair")
+        add_btn.clicked.connect(self._add_pair)
+        btn_layout.addWidget(add_btn)
+        btn_layout.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(close_btn)
+        layout.addLayout(btn_layout)
+        self.setLayout(layout)
+
+    def _load_pairs(self):
+        pairs = self.settings_manager.get_merge_pairs()
+        self.pairs_table.setRowCount(len(pairs))
+        for row, pair in enumerate(pairs):
+            self._populate_row(row, pair['source'], pair['target'])
+
+    def _populate_row(self, row, source, target):
+        source_edit = QLineEdit(source)
+        source_edit.setPlaceholderText("C:\\Source\\Dir")
+        target_edit = QLineEdit(target)
+        target_edit.setPlaceholderText("C:\\Symlink\\Dir")
+        remove_btn = QPushButton("✕")
+        remove_btn.setMaximumWidth(30)
+        remove_btn.clicked.connect(lambda: self._remove_pair_row(row))
+        self.pairs_table.setCellWidget(row, 0, source_edit)
+        self.pairs_table.setCellWidget(row, 1, target_edit)
+        self.pairs_table.setCellWidget(row, 2, remove_btn)
+
+    def _add_pair(self):
+        row = self.pairs_table.rowCount()
+        self.pairs_table.insertRow(row)
+        self._populate_row(row, "", "")
+
+    def _remove_pair_row(self, row):
+        self.pairs_table.removeRow(row)
+
+    def accept(self):
+        """Save all pairs and close."""
+        pairs = []
+        for row in range(self.pairs_table.rowCount()):
+            src = self.pairs_table.cellWidget(row, 0)
+            tgt = self.pairs_table.cellWidget(row, 1)
+            if src and tgt:
+                s = src.text().strip()
+                t = tgt.text().strip()
+                if s and t:
+                    pairs.append({'source': s, 'target': t})
+        # Clear and re-save
+        self.settings_manager.symlinks['merge_pairs'] = pairs
+        self.settings_manager.save_symlinks()
+        super().accept()
 
 
 class CreationWorker:
@@ -63,9 +152,20 @@ class SymlinkMainWindow(QMainWindow):
         self._drag_start_pos = None
         self._drag_start_geo = None
         self._pending_maximize = False
+        self._missing_symlinks_prompted = False
+        self._admin_retry_pending = False
         
         self.initUI()
         self.load_settings()
+
+        # Persistence timer — periodically checks and recreates missing symlinks
+        self._persist_timer = QTimer(self)
+        interval = self.settings_manager.get_setting('persistence_interval', 60) * 1000
+        self._persist_timer.setInterval(interval)
+        self._persist_timer.timeout.connect(self._run_persistence_check)
+        if self.settings_manager.get_setting('persist_symlinks', False):
+            self._persist_timer.start()
+            logging.info(f"Persistence timer started (interval={interval//1000}s)")
         
     def showEvent(self, event):
         """Restore maximized state after the window is first shown."""
@@ -132,6 +232,7 @@ class SymlinkMainWindow(QMainWindow):
         
         # Tab 3: Batch Operations
         self.batch_widget = BatchOperationsWidget()
+        self.batch_widget.operation_completed.connect(self._on_batch_operation_completed)
         self.tabs.addTab(self.batch_widget, "Batch")
 
         # Tab 4: History & Statistics
@@ -379,17 +480,28 @@ class SymlinkMainWindow(QMainWindow):
         options_layout = QHBoxLayout()
         
         self.relative_checkbox = QCheckBox("Relative")
-        default_relative = self.settings_manager.get_setting('relative_by_default', False)
-        self.relative_checkbox.setChecked(default_relative)
+        self.relative_checkbox.setChecked(
+            self.settings_manager.get_setting('create_relative', False)
+        )
+        self.relative_checkbox.toggled.connect(
+            lambda c: self.settings_manager.set_setting('create_relative', c))
         options_layout.addWidget(self.relative_checkbox)
         
         self.force_checkbox = QCheckBox("Force")
+        self.force_checkbox.setChecked(
+            self.settings_manager.get_setting('create_force', False)
+        )
+        self.force_checkbox.toggled.connect(
+            lambda c: self.settings_manager.set_setting('create_force', c))
         options_layout.addWidget(self.force_checkbox)
         
         if self.symlink_manager.is_windows():
             self.admin_checkbox = QCheckBox("Admin")
-            # Admin mode runs mklink via an elevated .bat helper (UAC prompt)
-            self.admin_checkbox.setChecked(False)
+            self.admin_checkbox.setChecked(
+                self.settings_manager.get_setting('create_admin', False)
+            )
+            self.admin_checkbox.toggled.connect(
+                lambda c: self.settings_manager.set_setting('create_admin', c))
             options_layout.addWidget(self.admin_checkbox)
         else:
             self.admin_checkbox = None
@@ -444,7 +556,7 @@ class SymlinkMainWindow(QMainWindow):
         self.symlinks_table.setColumnWidth(3, 150)  # Notes
         self.symlinks_table.setColumnWidth(4, 90)   # Created
         self.symlinks_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.symlinks_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.symlinks_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.symlinks_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.symlinks_table.customContextMenuRequested.connect(self.show_manage_table_context_menu)
         
@@ -488,23 +600,40 @@ class SymlinkMainWindow(QMainWindow):
             self.refresh_symlinks_table()
     
     def refresh_symlinks_table(self):
-        """Refresh the symlinks table and handle missing symlinks."""
+        """Refresh the symlinks table and handle missing symlinks (once per session)."""
+        # Reload from disk to pick up changes from other components
+        self.settings_manager.reload_symlinks()
         # Verify all symlinks to get current status
         status = self.settings_manager.verify_symlinks()
         
-        # Find and handle missing symlinks
+        # Find and handle missing symlinks (prompt only once per session)
         missing_links = [link for link in status['symlinks'] if link['status'] == 'missing']
         
-        if missing_links:
-            # Ask user if they want to remove missing symlinks
+        if missing_links and not self._missing_symlinks_prompted:
+            self._missing_symlinks_prompted = True
             missing_paths = '\n'.join([link['target'] for link in missing_links])
-            reply = QMessageBox.question(
-                self,
-                "Missing Symlinks Detected",
-                f"The following symlinks are missing:\n\n{missing_paths}\n\nRemove them from the manager?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes
+            
+            persist_active = self.settings_manager.get_setting('persist_symlinks', False)
+            persist_note = (
+                "\n\nPersistence is enabled — missing symlinks will be automatically "
+                "recreated in the background." if persist_active else
+                "\n\nTip: Enable 'Persist symlinks' in Settings to automatically "
+                "recreate missing symlinks in the background."
             )
+            
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Missing Symlinks Detected")
+            msg_box.setText(
+                f"The following symlinks are missing:\n\n{missing_paths}"
+                f"{persist_note}\n\n"
+                f"Remove them from the manager?"
+            )
+            msg_box.setStandardButtons(
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            msg_box.setDefaultButton(QMessageBox.StandardButton.Yes)
+            
+            reply = msg_box.exec()
             
             if reply == QMessageBox.StandardButton.Yes:
                 for link in missing_links:
@@ -563,47 +692,53 @@ class SymlinkMainWindow(QMainWindow):
         self.symlinks_status_label.setText(status_text)
     
     def edit_symlink_notes(self):
-        """Edit notes for selected symlink."""
-        current_row = self.symlinks_table.currentRow()
+        """Edit notes for selected symlinks."""
+        selected_rows = set()
+        for item in self.symlinks_table.selectedItems():
+            selected_rows.add(item.row())
         
-        if current_row < 0:
-            QMessageBox.warning(self, "No Selection", "Please select a symlink to edit.")
+        if not selected_rows:
+            QMessageBox.warning(self, "No Selection", "Please select at least one symlink to edit.")
             return
         
-        target = self.symlinks_table.item(current_row, 0).data(Qt.ItemDataRole.UserRole)
-        symlink = self.settings_manager.get_symlink_by_target(target)
+        # Collect targets from selected rows
+        targets = []
+        for row in sorted(selected_rows):
+            t = self.symlinks_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+            if t:
+                targets.append(t)
         
-        if not symlink:
-            QMessageBox.warning(self, "Error", "Symlink not found.")
+        if not targets:
             return
+        
+        # Use the first target to fetch existing notes
+        first_symlink = self.settings_manager.get_symlink_by_target(targets[0])
+        existing_notes = first_symlink.get('notes', '') if first_symlink else ''
         
         # Create edit dialog
         dialog = QDialog(self)
-        dialog.setWindowTitle("Edit Symlink Notes")
-        dialog.setMinimumWidth(400)
+        dialog.setWindowTitle(f"Edit Notes — {len(targets)} symlink(s)")
+        dialog.setMinimumWidth(450)
         
         layout = QVBoxLayout()
         
-        # Target info
-        info_label = QLabel(f"Target: {target}")
+        info_label = QLabel(f"Applying notes to {len(targets)} symlink(s):")
         info_label.setWordWrap(True)
         info_label.setStyleSheet("font-size: 9pt; color: #888;")
         layout.addWidget(info_label)
         
-        # Notes input
         notes_label = QLabel("Notes:")
         layout.addWidget(notes_label)
         
         notes_input = QLineEdit()
-        notes_input.setText(symlink.get('notes', ''))
-        notes_input.setPlaceholderText("Add notes about this symlink...")
+        notes_input.setText(existing_notes)
+        notes_input.setPlaceholderText("Add notes about these symlinks...")
         layout.addWidget(notes_input)
         
-        # Buttons
         button_layout = QHBoxLayout()
         
         save_btn = QPushButton("Save")
-        save_btn.clicked.connect(lambda: self.save_symlink_notes(dialog, target, notes_input.text()))
+        save_btn.clicked.connect(lambda: self._save_multi_symlink_notes(dialog, targets, notes_input.text()))
         button_layout.addWidget(save_btn)
         
         cancel_btn = QPushButton("Cancel")
@@ -612,50 +747,72 @@ class SymlinkMainWindow(QMainWindow):
         
         layout.addLayout(button_layout)
         dialog.setLayout(layout)
-        
         dialog.exec()
     
-    def save_symlink_notes(self, dialog: QDialog, target: str, notes: str):
-        """Save notes for a symlink."""
-        if self.settings_manager.update_symlink(target, notes=notes):
-            QMessageBox.information(self, "Success", "Notes saved successfully.")
+    def _save_multi_symlink_notes(self, dialog: QDialog, targets: list, notes: str):
+        """Save notes for multiple symlinks."""
+        success_count = 0
+        for t in targets:
+            if self.settings_manager.update_symlink(t, notes=notes):
+                success_count += 1
+        if success_count == len(targets):
+            QMessageBox.information(self, "Success", f"Notes saved for {success_count} symlink(s).")
             dialog.accept()
             self.refresh_symlinks_table()
         else:
-            QMessageBox.critical(self, "Error", "Failed to save notes.")
+            QMessageBox.critical(self, "Error", f"Saved notes for {success_count}/{len(targets)} symlink(s).")
     
     def delete_symlink(self):
-        """Delete selected symlink."""
-        current_row = self.symlinks_table.currentRow()
+        """Delete selected symlinks."""
+        selected_rows = set()
+        for item in self.symlinks_table.selectedItems():
+            selected_rows.add(item.row())
         
-        if current_row < 0:
-            QMessageBox.warning(self, "No Selection", "Please select a symlink to delete.")
+        if not selected_rows:
+            QMessageBox.warning(self, "No Selection", "Please select at least one symlink to delete.")
             return
         
-        target = self.symlinks_table.item(current_row, 0).data(Qt.ItemDataRole.UserRole)
+        # Collect targets from selected rows
+        targets = []
+        for row in sorted(selected_rows):
+            t = self.symlinks_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+            if t:
+                targets.append(t)
         
-        # Confirmation dialog
+        if not targets:
+            return
+        
+        # Confirmation dialog with list
+        target_list = '\n'.join(targets[:15])
+        if len(targets) > 15:
+            target_list += f'\n... and {len(targets) - 15} more'
         reply = QMessageBox.question(
             self,
-            "Delete Symlink",
-            f"Delete symlink at:\n{target}\n\nThis will also remove the symlink from disk.",
+            f"Delete {len(targets)} Symlink(s)",
+            f"Delete the following {len(targets)} symlink(s)?\n\n{target_list}\n\nThis will also remove them from disk.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
         )
         
         if reply != QMessageBox.StandardButton.Yes:
             return
         
-        # Remove from disk
-        success, message = self.symlink_manager.remove_symlink(target)
+        # Remove each symlink
+        removed = 0
+        errors = 0
+        for target in targets:
+            success, message = self.symlink_manager.remove_symlink(target)
+            if success:
+                self.settings_manager.remove_symlink(target)
+                removed += 1
+            else:
+                errors += 1
+                logging.warning(f"Delete: failed to remove symlink '{target}': {message}")
         
-        if success:
-            # Remove from tracking
-            self.settings_manager.remove_symlink(target)
-            QMessageBox.information(self, "Success", f"Symlink deleted successfully.\n{message}")
-            self.statusBar().showMessage("Symlink deleted")
-            self.refresh_symlinks_table()
-        else:
-            QMessageBox.critical(self, "Error", f"Failed to delete symlink:\n{message}")
+        if removed:
+            QMessageBox.information(self, "Success", f"Deleted {removed} symlink(s).")
+            self.statusBar().showMessage(f"Deleted {removed} symlink(s)")
+        if errors:
+            QMessageBox.warning(self, "Warning", f"Failed to delete {errors} symlink(s).")
     
     def verify_all_symlinks(self):
         """Verify all tracked symlinks."""
@@ -872,17 +1029,17 @@ class SymlinkMainWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
-        
-        # Theme selection
-        theme_layout = QHBoxLayout()
+
+        # ========== Theme ==========
+        theme_group = QGroupBox("Appearance")
+        theme_inner = QHBoxLayout()
         theme_label = QLabel("Theme:")
         theme_label.setStyleSheet("font-weight: bold;")
-        theme_layout.addWidget(theme_label)
-        
+        theme_inner.addWidget(theme_label)
+
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(['Dark', 'Light', 'Monokai', 'Pastel Pink', 'Pastel Blue', 'Pastel Green', 'Pastel Orange'])
         current_theme = self.settings_manager.get_setting('theme', 'dark')
-        # Map internal theme names to display names
         theme_display_map = {
             'dark': 'Dark',
             'light': 'Light',
@@ -896,28 +1053,29 @@ class SymlinkMainWindow(QMainWindow):
         self.theme_combo.currentTextChanged.connect(self.change_theme)
         self.theme_combo.setMinimumWidth(100)
         self.theme_combo.setMaximumWidth(150)
-        theme_layout.addWidget(self.theme_combo)
-        theme_layout.addStretch()
-        layout.addLayout(theme_layout)
-        
-        # System tray settings
+        theme_inner.addWidget(self.theme_combo)
+        theme_inner.addStretch()
+        theme_group.setLayout(theme_inner)
+        layout.addWidget(theme_group)
+
+        # ========== System Tray ==========
         tray_group = QGroupBox("System Tray")
         tray_layout = QVBoxLayout()
-        
+
         self.minimize_to_tray_checkbox = QCheckBox("Minimize to system tray on close")
         self.minimize_to_tray_checkbox.setChecked(
             self.settings_manager.get_setting('minimize_to_tray', True)
         )
         self.minimize_to_tray_checkbox.toggled.connect(self._on_minimize_to_tray_toggled)
         tray_layout.addWidget(self.minimize_to_tray_checkbox)
-        
+
         self.start_on_login_checkbox = QCheckBox("Start on system login (minimized to tray)")
         self.start_on_login_checkbox.setChecked(
             self.settings_manager.get_setting('start_on_login', False)
         )
         self.start_on_login_checkbox.toggled.connect(self._on_start_on_login_toggled)
         tray_layout.addWidget(self.start_on_login_checkbox)
-        
+
         tray_info = QLabel(
             "When enabled, closing the window will minimize it to the system tray "
             "instead of quitting the application. Use the tray icon to show or quit."
@@ -925,21 +1083,79 @@ class SymlinkMainWindow(QMainWindow):
         tray_info.setWordWrap(True)
         tray_info.setStyleSheet("font-size: 9pt; color: #888;")
         tray_layout.addWidget(tray_info)
-        
+
         tray_group.setLayout(tray_layout)
         layout.addWidget(tray_group)
-        
-        # Information
+
+        # ========== Persistence & Merge ==========
+        pm_group = QGroupBox("Persistence & Merge")
+        pm_layout = QVBoxLayout()
+
+        self.persist_symlinks_checkbox = QCheckBox("Persist symlinks — automatically recreate missing symlinks")
+        self.persist_symlinks_checkbox.setChecked(
+            self.settings_manager.get_setting('persist_symlinks', False)
+        )
+        self.persist_symlinks_checkbox.toggled.connect(self._on_persist_symlinks_toggled)
+        pm_layout.addWidget(self.persist_symlinks_checkbox)
+
+        # Interval spin row
+        interval_layout = QHBoxLayout()
+        interval_layout.setContentsMargins(24, 0, 0, 0)
+        interval_label = QLabel("Check interval (seconds):")
+        interval_label.setStyleSheet("font-size: 9pt;")
+        interval_layout.addWidget(interval_label)
+
+        self.persist_interval_spin = QSpinBox()
+        self.persist_interval_spin.setRange(10, 3600)
+        self.persist_interval_spin.setSuffix(" s")
+        self.persist_interval_spin.setValue(
+            self.settings_manager.get_setting('persistence_interval', 60)
+        )
+        self.persist_interval_spin.valueChanged.connect(self._on_persistence_interval_changed)
+        self.persist_interval_spin.setMinimumWidth(80)
+        self.persist_interval_spin.setMaximumWidth(100)
+        interval_layout.addWidget(self.persist_interval_spin)
+        interval_layout.addStretch()
+        pm_layout.addLayout(interval_layout)
+
+        # Merge Settings button
+        merge_btn_layout = QHBoxLayout()
+        self.merge_settings_btn = QPushButton("Merge Settings...")
+        self.merge_settings_btn.clicked.connect(self._open_merge_settings)
+        merge_btn_layout.addWidget(self.merge_settings_btn)
+        merge_btn_layout.addStretch()
+        pm_layout.addLayout(merge_btn_layout)
+
+        pm_info = QLabel(
+            "Persistence checks all tracked symlinks every N seconds and\n"
+            "automatically recreates any that are missing.\n\n"
+            "Merge Settings lets you define source → target directory pairs.\n"
+            "When a merge pair matches a missing symlink, the target folder is\n"
+            "scanned for items not in the source. Those are copied to source,\n"
+            "removed from target, and replaced with new symlinks."
+        )
+        pm_info.setWordWrap(True)
+        pm_info.setStyleSheet("font-size: 9pt; color: #888;")
+        pm_layout.addWidget(pm_info)
+
+        pm_group.setLayout(pm_layout)
+        layout.addWidget(pm_group)
+
+        # ========== Information ==========
+        info_group = QGroupBox("About")
+        info_layout = QVBoxLayout()
         info_text = QLabel()
         info_text.setWordWrap(True)
         info_text.setStyleSheet("font-size: 10pt; line-height: 1.5;")
         info_text.setText(
-            f"<b>Symlink Manager v2.0.2</b><br>"
+            f"<b>Symlink Manager v2.1.0</b><br>"
             f"<b>Platform:</b> {self.get_platform_name()}<br>"
             f"<b>Python:</b> {sys.version.split()[0]}"
         )
-        layout.addWidget(info_text)
-        
+        info_layout.addWidget(info_text)
+        info_group.setLayout(info_layout)
+        layout.addWidget(info_group)
+
         layout.addStretch()
         widget.setLayout(layout)
         return widget
@@ -964,7 +1180,38 @@ class SymlinkMainWindow(QMainWindow):
                 f"Failed to {'enable' if checked else 'disable'} autostart. "
                 "Try running as administrator or check permissions."
             )
-    
+
+    def _on_persist_symlinks_toggled(self, checked: bool):
+        """Handle persist-symlinks checkbox toggle."""
+        self.settings_manager.set_setting('persist_symlinks', checked)
+        if checked:
+            interval = self.settings_manager.get_setting('persistence_interval', 60) * 1000
+            self._persist_timer.setInterval(interval)
+            self._persist_timer.start()
+            logging.info(f"Persistence enabled — timer started (interval={interval//1000}s)")
+            # Run an immediate check so the user sees the effect right away
+            self._run_persistence_check()
+        else:
+            self._persist_timer.stop()
+            logging.info("Persistence disabled — timer stopped")
+
+    def _on_persistence_interval_changed(self, seconds: int):
+        """Handle persistence interval spinbox change."""
+        self.settings_manager.set_setting('persistence_interval', seconds)
+        if self._persist_timer.isActive():
+            self._persist_timer.setInterval(seconds * 1000)
+            logging.info(f"Persistence interval changed to {seconds}s")
+
+    def _on_batch_operation_completed(self, source: str, success: bool, message: str):
+        """Called when a batch operation completes — refresh the Manage tab."""
+        self.settings_manager.reload_symlinks()
+        self.refresh_symlinks_table()
+
+    def _open_merge_settings(self):
+        """Open the Merge Settings dialog."""
+        dialog = MergeSettingsDialog(self.settings_manager, self)
+        dialog.exec()
+
     def browse_source(self):
         """Open file dialog to select source."""
         dialog = QFileDialog(self)
@@ -1105,9 +1352,11 @@ class SymlinkMainWindow(QMainWindow):
         self.source_input.clear()
         self.target_input.clear()
         self.relative_checkbox.setChecked(
-            self.settings_manager.get_setting('relative_by_default', False)
+            self.settings_manager.get_setting('create_relative', False)
         )
-        self.force_checkbox.setChecked(False)
+        self.force_checkbox.setChecked(
+            self.settings_manager.get_setting('create_force', False)
+        )
     
     def refresh_history(self):
         """Refresh the history display."""
@@ -1203,6 +1452,208 @@ class SymlinkMainWindow(QMainWindow):
             self.quit_application()
             event.accept()
     
+    def _run_persistence_check(self):
+        """Check all tracked symlinks, run merge on every tick, recreate any that are missing."""
+        symlinks = self.settings_manager.get_all_symlinks()
+        if not symlinks:
+            logging.debug("Persistence check: no tracked symlinks to verify")
+            return
+
+        status = self.settings_manager.verify_symlinks()
+        missing = [link for link in status['symlinks'] if link['status'] == 'missing']
+        merge_pairs = self.settings_manager.get_merge_pairs()
+
+        # ---- Phase 1: Merge — runs EVERY tick regardless of missing symlinks ----
+        batch_ops = []       # (source, target, is_dir, force, relative, admin)
+        merge_tracked = []   # new sub-symlinks to track after batch
+        seen_targets = set() # silently ignore duplicate target paths
+        needs_admin = False
+
+        if merge_pairs:
+            # Check for potential overwrites before running merge
+            merge_approved = True
+            pending_overwrites = []
+            for link in status['symlinks']:
+                target = link['target']
+                symlink_parent = str(Path(target).parent.resolve())
+                for pair in merge_pairs:
+                    if str(Path(pair['target']).resolve()) == symlink_parent:
+                        # Check if any files in the parent dir would overwrite source files
+                        try:
+                            parent_path = Path(symlink_parent)
+                            src_path = Path(pair['source'])
+                            for item in parent_path.iterdir():
+                                if item.name == Path(target).name:
+                                    continue
+                                if item.is_symlink():
+                                    continue
+                                dest = src_path / item.name
+                                if dest.exists():
+                                    # Compare timestamps: only flag if the
+                                    # incoming file is strictly newer than
+                                    # what's already in the source
+                                    try:
+                                        src_mtime = dest.stat().st_mtime
+                                        item_mtime = item.stat().st_mtime
+                                        if item_mtime > src_mtime:
+                                            pending_overwrites.append(
+                                                f"'{item.name}' (incoming) → '{dest}' (existing)"
+                                            )
+                                    except Exception:
+                                        pending_overwrites.append(str(dest))
+                        except Exception:
+                            pass
+                        break
+
+            if pending_overwrites:
+                reply = QMessageBox.question(
+                    self,
+                    "Merge — Overwrite Confirmation",
+                    f"Merge found {len(pending_overwrites)} file(s) that will be overwritten:\n\n"
+                    + "\n".join(pending_overwrites[:15])
+                    + ("\n..." if len(pending_overwrites) > 15 else "")
+                    + "\n\nAllow merge to overwrite these files?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    merge_approved = False
+                    logging.info("Merge: user declined overwrite — skipping merge phase")
+
+            if merge_approved:
+                for link in status['symlinks']:
+                    target = link['target']
+                    source = link['source']
+                    if target in seen_targets:
+                        continue
+                    symlink_parent = str(Path(target).parent.resolve())
+                    for pair in merge_pairs:
+                        if str(Path(pair['target']).resolve()) == symlink_parent:
+                            merge_ok, merge_msg, new_symlinks = self.symlink_manager.merge_directories(
+                                pair['source'], target
+                            )
+                            if not merge_ok:
+                                logging.warning(f"Persistence recovery: merge failed for '{target}': {merge_msg}")
+                            else:
+                                logging.info(f"Persistence recovery: merge for '{target}': {merge_msg}")
+                                for ns in new_symlinks:
+                                    merge_tracked.append(ns)
+                                    ns_target = ns['target']
+                                    seen_targets.add(ns_target)
+                                    batch_ops.append((ns['source'], ns_target,
+                                                      ns.get('is_dir', Path(ns['source']).is_dir()), False, False, False))
+                            break
+
+        # ---- Phase 2: Add missing symlinks to batch ----
+        if not missing:
+            logging.debug("Persistence check: all symlinks are present")
+            self._admin_retry_pending = False
+        else:
+            logging.info(f"Persistence check: {len(missing)} symlink(s) missing — attempting recovery")
+            for entry in missing:
+                source = entry['source']
+                target = entry['target']
+                if target in seen_targets:
+                    continue
+                seen_targets.add(target)
+                try:
+                    source_path = Path(source)
+                    is_dir = source_path.is_dir() if source_path.exists() else False
+                    batch_ops.append((source, target, is_dir, False, False, False))
+                except Exception as e:
+                    logging.error(f"Persistence recovery: exception for '{target}': {e}")
+
+        if not batch_ops:
+            logging.debug("Persistence check: no operations to perform")
+            return
+
+        # ---- Phase 2: Run all symlink creations as a single batch ----
+        overall_success, batch_msg, results = self.symlink_manager.run_batch(batch_ops)
+
+        # Check if any failures were due to admin privileges
+        needs_admin = False
+        recreated = sum(1 for _, _, ok, _ in results if ok)
+        failed = sum(1 for _, _, ok, _ in results if not ok)
+        if failed:
+            admin_failures = any("ADMIN_REQUIRED" in msg for s, t, ok, msg in results if not ok)
+            if admin_failures and self.symlink_manager.is_windows():
+                needs_admin = True
+                logging.warning(
+                    f"Persistence recovery: {failed} symlink(s) failed — retrying with admin in 15s"
+                )
+            elif admin_failures:
+                logging.warning(f"Persistence recovery: {failed} symlink(s) failed — admin required on another platform")
+            else:
+                logging.warning(f"Persistence recovery: {failed} symlink(s) failed (non-admin errors)")
+
+        if needs_admin:
+            if self._admin_retry_pending:
+                logging.debug("Persistence recovery: admin retry already scheduled — skipping")
+            else:
+                self._admin_retry_pending = True
+                # Notify via desktop notification
+                if self.tray_icon and self.tray_icon.is_available:
+                    self.tray_icon.show_message(
+                        "Symlink Manager — Admin Required",
+                        f"Persistence recreated {recreated} symlink(s), but {failed} require "
+                        f"admin privileges. Retrying with elevated rights in 15 seconds.",
+                        duration=8000
+                    )
+                self.statusBar().showMessage(
+                    f"Persistence: {recreated} recreated, {failed} need admin — retrying with admin in 15s",
+                    8000
+                )
+                # Collect only the ops that actually failed
+                failed_ops = [op for op, (_, _, ok, _) in zip(batch_ops, results) if not ok]
+                QTimer.singleShot(15_000, lambda: self._retry_persistence_with_admin(failed_ops))
+        else:
+            self._admin_retry_pending = False
+            if recreated:
+                logging.info(f"Persistence recovery: {recreated} symlink(s) recreated via batch")
+            if failed:
+                logging.warning(f"Persistence recovery: {failed} symlink(s) failed")
+
+        # Track new sub-symlinks from merge
+        for ns in merge_tracked:
+            self.settings_manager.add_symlink(ns['source'], ns['target'], notes="")
+            logging.info(f"Persistence recovery: tracked new symlink from merge: '{ns['target']}' -> '{ns['source']}'")
+
+        if recreated:
+            self.statusBar().showMessage(
+                f"Persistence: recreated {recreated} symlink(s)",
+                5000
+            )
+            if self.tabs.currentIndex() == 1:  # Manage tab
+                self.refresh_symlinks_table()
+
+    def _retry_persistence_with_admin(self, failed_ops: list):
+        """Retry failed symlink creations with admin=True after a delay."""
+        if not failed_ops:
+            return
+
+        logging.info(f"Persistence retry: attempting {len(failed_ops)} symlink(s) with admin privileges")
+
+        # Rebuild batch ops with admin=True and force=True (since target might exist partially)
+        retry_ops = []
+        for op in failed_ops:
+            s, t, d, _, r, _ = op  # (source, target, is_dir, force, relative, admin)
+            retry_ops.append((s, t, d, True, r, True))
+
+        overall_success, batch_msg, results = self.symlink_manager.run_batch(retry_ops)
+        recreated = sum(1 for _, _, ok, _ in results if ok)
+        failed = sum(1 for _, _, ok, _ in results if not ok)
+
+        # Only reset the retry flag if ALL symlinks were created, or if none
+        # required admin (allowing a fresh attempt next time)
+        if recreated == 0 or not any("ADMIN_REQUIRED" in msg or "UAC" in msg
+                                     for _, _, _, msg in results if not ok):
+            self._admin_retry_pending = False
+
+        logging.info(f"Persistence retry: {recreated} symlink(s) recreated with admin, {failed} failed")
+        if recreated:
+            self.statusBar().showMessage(f"Persistence: {recreated} symlink(s) recreated with admin", 5000)
+            if self.tabs.currentIndex() == 1:
+                self.refresh_symlinks_table()
+
     @staticmethod
     def get_platform_name() -> str:
         """Get human-readable platform name."""
