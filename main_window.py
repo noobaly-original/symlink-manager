@@ -1473,7 +1473,9 @@ class SymlinkMainWindow(QMainWindow):
                                 logging.info(f"Persistence recovery: {merge_msg} for '{target}'")
                                 for ns in new_symlinks:
                                     merge_tracked.append(ns)
-                                    batch_ops.append((ns['source'], ns['target'],
+                                    ns_target = ns['target']
+                                    seen_targets.add(ns_target)
+                                    batch_ops.append((ns['source'], ns_target,
                                                       ns.get('is_dir', Path(ns['source']).is_dir()), False, False, False))
                             break
 
@@ -1491,29 +1493,31 @@ class SymlinkMainWindow(QMainWindow):
         # ---- Phase 2: Run all symlink creations as a single batch ----
         overall_success, batch_msg, results = self.symlink_manager.run_batch(batch_ops)
 
-        # Check if admin was required and we weren't elevated
-        if not overall_success and "ADMIN_REQUIRED" in batch_msg:
-            needs_admin = True
-            # Some operations may have succeeded even in partial failure
-            recreated = sum(1 for _, _, ok, _ in results if ok)
-            failed = sum(1 for _, _, ok, _ in results if not ok)
+        # Check if any failures were due to admin privileges
+        needs_admin = False
+        recreated = sum(1 for _, _, ok, _ in results if ok)
+        failed = sum(1 for _, _, ok, _ in results if not ok)
+        if failed:
+            admin_failures = any("ADMIN_REQUIRED" in msg for _, _, _, msg in results if not ok)
+            if admin_failures and self.symlink_manager.is_windows():
+                needs_admin = True
+                logging.warning(
+                    f"Persistence recovery: {failed} symlink(s) failed — retrying with admin in 15s"
+                )
+            elif admin_failures:
+                logging.warning(f"Persistence recovery: {failed} symlink(s) failed — admin required on another platform")
+            else:
+                logging.warning(f"Persistence recovery: {failed} symlink(s) failed (non-admin errors)")
 
-            if recreated > 0:
-                logging.info(f"Persistence recovery: {recreated} symlink(s) recreated without admin")
-
-            logging.warning(f"Persistence recovery: {failed} symlink(s) require admin privileges")
+        if needs_admin:
             self.statusBar().showMessage(
                 f"Persistence: {recreated} recreated, {failed} need admin — retrying with admin in 15s",
                 8000
             )
-
-            # Schedule a retry with admin=True after 15 seconds
-            QTimer.singleShot(15_000, lambda: self._retry_persistence_with_admin(
-                [op for op, (_, _, ok, _) in zip(batch_ops, results) if not ok]
-            ))
+            # Collect only the ops that actually failed
+            failed_ops = [op for op, (_, _, ok, _) in zip(batch_ops, results) if not ok]
+            QTimer.singleShot(15_000, lambda: self._retry_persistence_with_admin(failed_ops))
         else:
-            recreated = sum(1 for _, _, ok, _ in results if ok)
-            failed = sum(1 for _, _, ok, _ in results if not ok)
             if recreated:
                 logging.info(f"Persistence recovery: {recreated} symlink(s) recreated via batch")
             if failed:
