@@ -15,7 +15,7 @@ from startup_manager import StartupManager
 def setup_logging():
     """Set up application logging to symlmg.log in the app root directory.
     The log file is truncated (cleared) on every app start."""
-    log_path = Path(__file__).parent / "symlmg.log"
+    log_path = "./symlmg.log"
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",

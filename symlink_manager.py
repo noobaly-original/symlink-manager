@@ -7,6 +7,7 @@ import os
 import sys
 import platform
 import subprocess
+import logging
 from pathlib import Path
 from typing import Tuple, Optional, List
 
@@ -138,7 +139,11 @@ call "{batch_path}" > "{log_path}" 2>&1
             total = len(operations)
             if log_path.exists():
                 log_text = log_path.read_text(encoding="utf-8", errors="replace")
-                print(log_text)
+                for l in log_text.splitlines():
+                    if not l.startswith("if errorlevel") and not l.startswith("FAIL"):
+                        logging.info(l)
+                    else:
+                        logging.warning(l)
                 for line in log_text.splitlines():
                     if line.startswith("FAIL,"):
                         failures += 1
