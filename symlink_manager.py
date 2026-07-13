@@ -48,34 +48,186 @@ class SymlinkManager:
         return SymlinkManager._is_elevated
 
     @staticmethod
-    def relaunch_as_admin():
+    def run_mklink_batch(operations: List[Tuple[str, str, bool, bool]]) -> Tuple[bool, str]:
         """
-        Relaunch the application with administrator privileges.
-        Works on Windows for both script mode and PyInstaller bundles.
-        Exits the current process after launching.
+        Windows only: build a temporary .bat file with mklink commands and
+        run it elevated via ShellExecuteW (runas).  This avoids needing to
+        run the entire app as admin.
+
+        Each operation is: (source, target, is_dir, force)
+
+        Returns (success, message) where message is a summary or error.
         """
         if not SymlinkManager.is_windows():
-            return False
-        try:
-            import ctypes
-            # Determine if we're running as a PyInstaller bundle
-            if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-                # PyInstaller .exe: self-contained, no arguments needed
-                ctypes.windll.shell32.ShellExecuteW(
-                    None, "runas", sys.executable, None, None, 1
-                )
+            return False, "Not supported on this platform"
+
+        lines = ["@echo off", "chcp 65001 >nul", "setlocal enabledelayedexpansion", ""]
+        for i, (source, target, is_dir, force) in enumerate(operations):
+            # Normalise to Windows backslashes — mklink does not accept /
+            src = source.replace('/', '\\')
+            tgt = target.replace('/', '\\')
+            target_path = Path(target)
+            if force and target_path.exists():
+                if target_path.is_dir() and not target_path.is_symlink():
+                    lines.append(f'rmdir "{tgt}" 2>nul')
+                else:
+                    lines.append(f'del "{tgt}" 2>nul')
+            lines.append(f'echo OP,{i},src="{src}",tgt="{tgt}"')
+            if is_dir:
+                lines.append(f'mklink /D "{tgt}" "{src}"')
             else:
-                # Running as Python script: pass script path as argument
-                script = str(Path(sys.argv[0]).absolute())
-                ctypes.windll.shell32.ShellExecuteW(
-                    None, "runas", sys.executable, script, None, 1
-                )
-            # Exit the current (non-elevated) process
-            sys.exit(0)
-        except Exception:
-            return False
-        return True
-    
+                lines.append(f'mklink "{tgt}" "{src}"')
+            lines.append(f'if errorlevel 1 (echo FAIL,{i}) else (echo OK,{i})')
+            lines.append("")
+
+        lines.append("endlocal")
+        batch_content = "\r\n".join(lines)
+
+        import tempfile
+        import time
+        batch_path = Path(tempfile.gettempdir()) / f"symlink_mklink_{int(time.time())}.bat"
+        log_path = batch_path.with_suffix(".log")
+
+        try:
+            batch_path.write_text(batch_content, encoding="utf-8-sig")
+
+            # Write a wrapper that redirects all output to a log file, then deletes itself
+            wrapper_path = batch_path.with_suffix(".wrapper.bat")
+            wrapper = f"""@echo off
+cd /d "%~dp0"
+call "{batch_path}" > "{log_path}" 2>&1
+"""
+            wrapper_path.write_text(wrapper, encoding="utf-8-sig")
+
+            # Elevate via ShellExecuteW with "runas" verb.
+            # Run cmd.exe /c with the wrapper path so elevation is inherited.
+            import ctypes
+            result = ctypes.windll.shell32.ShellExecuteW(
+                None, "runas", "cmd.exe",
+                f'/c "{wrapper_path}"',
+                str(batch_path.parent), 0  # SW_HIDE
+            )
+            if result <= 32:
+                return False, f"UAC prompt was cancelled or failed (code={result})"
+
+            # Wait for the log file to appear and stabilise
+            waited = 0
+            while waited < 60:
+                if log_path.exists():
+                    time.sleep(0.5)
+                    break
+                time.sleep(0.5)
+                waited += 1
+
+            # Wait for the process to finish — poll until log stops growing
+            prev_size = -1
+            stable_count = 0
+            while stable_count < 3 and waited < 120:
+                if log_path.exists():
+                    cur_size = log_path.stat().st_size
+                    if cur_size == prev_size:
+                        stable_count += 1
+                    else:
+                        stable_count = 0
+                    prev_size = cur_size
+                time.sleep(0.5)
+                waited += 1
+
+            # Parse results
+            failures = 0
+            total = len(operations)
+            if log_path.exists():
+                log_text = log_path.read_text(encoding="utf-8", errors="replace")
+                print(log_text)
+                for line in log_text.splitlines():
+                    if line.startswith("FAIL,"):
+                        failures += 1
+
+            # Cleanup
+            for p in [batch_path, wrapper_path, log_path]:
+                try:
+                    p.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+            if failures:
+                return False, f"{failures}/{total} symlink(s) failed — check permissions or paths"
+            return True, f"All {total} symlink(s) created successfully via elevated batch"
+
+        except Exception as e:
+            return False, f"Elevated batch failed: {e}"
+
+    @staticmethod
+    def run_batch(operations: List[Tuple[str, str, bool, bool, bool, bool]]) -> Tuple[bool, str, List[Tuple[str, str, bool, str]]]:
+        """
+        Cross-platform batch symlink creation.
+
+        Each operation tuple is: (source, target, is_dir, force, relative, admin)
+
+        On Windows with admin=True and not already elevated, delegates to
+        run_mklink_batch().  On all other platforms runs each operation
+        directly via os.symlink() / mklink.
+
+        Returns (overall_success, summary_message, per_result_details).
+        """
+        results: List[Tuple[str, str, bool, str]] = []
+
+        # --- Windows elevated batch path ---
+        if SymlinkManager.is_windows() and operations:
+            needs_admin = any(op[5] for op in operations) if len(operations[0]) > 5 else False
+            if needs_admin and not SymlinkManager._check_elevated():
+                mklink_ops = [(s, t, d, f) for s, t, d, f, _, _ in operations]
+                success, msg = SymlinkManager.run_mklink_batch(mklink_ops)
+                for s, t, _, _, _, _ in operations:
+                    results.append((s, t, success, msg))
+                return success, msg, results
+
+        # --- Direct path (all platforms) ---
+        failures = 0
+        for source, target, is_dir, force, relative, _admin in operations:
+            try:
+                target_path = Path(target)
+
+                if force and (target_path.exists() or target_path.is_symlink()):
+                    if target_path.is_dir() and not target_path.is_symlink():
+                        os.rmdir(str(target_path))
+                    else:
+                        target_path.unlink()
+
+                if SymlinkManager.is_windows():
+                    # Use the battle-tested create_symlink logic which handles
+                    # os.symlink fallback, mklink, and ADMIN_REQUIRED detection
+                    success, msg = SymlinkManager.create_symlink(
+                        source, target, relative, force, _admin
+                    )
+                    if success:
+                        results.append((source, target, True, msg))
+                    else:
+                        results.append((source, target, False, msg))
+                        if msg == "ADMIN_REQUIRED":
+                            failures += 1
+                else:
+                    # macOS / Linux
+                    src = source
+                    if relative:
+                        try:
+                            src = os.path.relpath(source, target_path.parent)
+                        except ValueError:
+                            pass
+                    os.symlink(src, target)
+                    results.append((source, target, True, "Created"))
+            except FileExistsError:
+                results.append((source, target, False, "Target already exists"))
+                failures += 1
+            except Exception as e:
+                results.append((source, target, False, str(e)))
+                failures += 1
+
+        total = len(operations)
+        if failures:
+            return False, f"{failures}/{total} symlink(s) failed", results
+        return True, f"All {total} symlink(s) created successfully", results
+
     @staticmethod
     def validate_paths(source: str, target: str) -> Tuple[bool, str]:
         """
@@ -176,16 +328,21 @@ class SymlinkManager:
                 except Exception as e:
                     return False, f"Could not remove existing target: {e}"
 
+            # If admin mode was requested and we're not already elevated,
+            # skip straight to the .bat elevation approach
+            if admin and not SymlinkManager._check_elevated():
+                ops = [(source, target, is_dir, force)]
+                return SymlinkManager.run_mklink_batch(ops)
+
             # If already elevated, skip directly to mklink
             if SymlinkManager._check_elevated():
-                cmd = ["mklink"]
+                cmd = "mklink"
                 if is_dir:
-                    cmd.append("/D")
-                cmd.append(str(target_path))
-                cmd.append(str(source_path))
+                    cmd += " /D"
+                cmd += f' "{target_path}" "{source_path}"'
                 # mklink is a cmd.exe internal command — must use shell=True
                 result = subprocess.run(
-                    " ".join(f'"{c}"' for c in cmd), capture_output=True, text=True,
+                    cmd, capture_output=True, text=True,
                     check=False, shell=True
                 )
                 if result.returncode == 0:
@@ -201,14 +358,13 @@ class SymlinkManager:
 
             # Try mklink directly (may work without admin on some systems)
             try:
-                cmd = ["mklink"]
+                cmd = "mklink"
                 if is_dir:
-                    cmd.append("/D")
-                cmd.append(str(target_path))
-                cmd.append(str(source_path))
+                    cmd += " /D"
+                cmd += f' "{target_path}" "{source_path}"'
                 # mklink is a cmd.exe internal command — must use shell=True
                 result = subprocess.run(
-                    " ".join(f'"{c}"' for c in cmd), capture_output=True, text=True,
+                    cmd, capture_output=True, text=True,
                     check=False, shell=True
                 )
                 if result.returncode == 0:
@@ -216,8 +372,12 @@ class SymlinkManager:
             except Exception:
                 pass
 
+            # Not elevated and admin mode was requested — use .bat elevation
+            if admin:
+                ops = [(source, target, is_dir, force)]
+                return SymlinkManager.run_mklink_batch(ops)
+
             # Not elevated and all non-admin methods failed.
-            # Return a special error so the UI can offer to restart as admin.
             return False, "ADMIN_REQUIRED"
 
         except Exception as e:

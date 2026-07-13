@@ -65,13 +65,19 @@ class SymlinkMainWindow(QMainWindow):
         self._pending_maximize = False
         
         self.initUI()
-        self._patch_uipi_for_window()  # Enable drag-drop when elevated
         self.load_settings()
         
+    def showEvent(self, event):
+        """Restore maximized state after the window is first shown."""
+        super().showEvent(event)
+        if self._pending_maximize:
+            self._pending_maximize = False
+            self.showMaximized()
+
     def initUI(self):
         """Initialize the user interface."""
         self.setWindowTitle('Symlink Manager')
-        self.setMinimumSize(600, 660)
+        self.setMinimumSize(660, 660)
         self.resize(650, 420)
         
         # Remove the native window frame (cross-platform)
@@ -154,43 +160,6 @@ class SymlinkMainWindow(QMainWindow):
         # Initialize system tray icon
         self._setup_tray_icon()
     
-    def _patch_uipi_for_window(self):
-        """
-        When running elevated on Windows, UIPI blocks drag-drop from Explorer.
-        Apply ChangeWindowMessageFilterEx to this window's HWND to allow
-        OLE drag-drop messages through.
-        """
-        if sys.platform != 'win32':
-            return
-        # Can only patch after the window has been shown — lazy-patch on first show
-        try:
-            import ctypes
-            from ctypes import wintypes
-
-            if not ctypes.windll.shell32.IsUserAnAdmin():
-                return
-
-            # Wait until the native winId() is valid
-            hwnd = int(self.winId())
-            if hwnd == 0:
-                return
-
-            MSGFLT_ALLOW = 1
-            WM_DROPFILES = 0x0233
-            WM_COPYDATA = 0x004A
-            WM_COPYGLOBALDATA = 0x0049
-
-            user32 = ctypes.windll.user32
-            change_filter_ex = user32.ChangeWindowMessageFilterEx
-            change_filter_ex.argtypes = [
-                wintypes.HWND, wintypes.UINT, wintypes.DWORD, ctypes.c_void_p,
-            ]
-            change_filter_ex.restype = wintypes.BOOL
-            for msg in (WM_DROPFILES, WM_COPYDATA, WM_COPYGLOBALDATA):
-                change_filter_ex(hwnd, msg, MSGFLT_ALLOW, None)
-        except Exception:
-            pass  # Best-effort
-
     def _setup_tray_icon(self):
         """Set up the system tray icon."""
         self.tray_icon = TrayIcon(self)
@@ -419,7 +388,7 @@ class SymlinkMainWindow(QMainWindow):
         
         if self.symlink_manager.is_windows():
             self.admin_checkbox = QCheckBox("Admin")
-            # Admin mode only needed if Developer Mode is off and os.symlink fails
+            # Admin mode runs mklink via an elevated .bat helper (UAC prompt)
             self.admin_checkbox.setChecked(False)
             options_layout.addWidget(self.admin_checkbox)
         else:
@@ -965,7 +934,7 @@ class SymlinkMainWindow(QMainWindow):
         info_text.setWordWrap(True)
         info_text.setStyleSheet("font-size: 10pt; line-height: 1.5;")
         info_text.setText(
-            f"<b>Symlink Manager v2.0.0</b><br>"
+            f"<b>Symlink Manager v2.0.1</b><br>"
             f"<b>Platform:</b> {self.get_platform_name()}<br>"
             f"<b>Python:</b> {sys.version.split()[0]}"
         )
@@ -1097,9 +1066,20 @@ class SymlinkMainWindow(QMainWindow):
             source, target, relative, force, admin
         )
         
-        # Handle admin-required response
+        # Handle admin-required response — offer to retry with admin mode
         if not success and message == "ADMIN_REQUIRED":
-            self._offer_admin_relaunch()
+            reply = QMessageBox.question(
+                self,
+                "Administrator Privileges Required",
+                "Creating symlinks on Windows requires administrator privileges.\n\n"
+                "Do you want to retry with Admin mode enabled?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                # Set admin checkbox and retry
+                if self.admin_checkbox:
+                    self.admin_checkbox.setChecked(True)
+                self.create_symlink()
             return
         
         # Record in history
@@ -1119,22 +1099,6 @@ class SymlinkMainWindow(QMainWindow):
             self.statusBar().showMessage(f"Error: {message}")
         
         self.refresh_history()
-    
-    def _offer_admin_relaunch(self):
-        """Offer to relaunch the app as administrator."""
-        if not self.symlink_manager.is_windows():
-            return
-        reply = QMessageBox.question(
-            self,
-            "Administrator Privileges Required",
-            "Creating symlinks on Windows requires administrator privileges.\n\n"
-            "Do you want to restart the application as administrator?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self.save_window_geometry()
-            self.tray_icon.cleanup()
-            self.symlink_manager.relaunch_as_admin()
     
     def clear_inputs(self):
         """Clear input fields."""
@@ -1221,13 +1185,6 @@ class SymlinkMainWindow(QMainWindow):
             # Defer maximize until the window is shown (avoid flash)
             self._pending_maximize = geometry.get('maximized', False)
 
-    def showEvent(self, event):
-        """Restore maximized state after the window is first shown."""
-        super().showEvent(event)
-        if self._pending_maximize:
-            self._pending_maximize = False
-            self.showMaximized()
-    
     def closeEvent(self, event):
         """Handle window close event."""
         self.save_window_geometry()

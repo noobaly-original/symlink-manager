@@ -426,6 +426,34 @@ class BatchOperationsWidget(QWidget):
     def _run_batch_direct(self, operations, relative, force, admin,
                           confirm_each, skip_errors):
         """Run each symlink creation individually."""
+        # ---- Cross-platform batch path (no confirm-each) ----
+        # Build all operations upfront and run them as a batch.
+        if not confirm_each:
+            batch_ops = []
+            for source, target in operations:
+                source_path = Path(source)
+                is_dir = source_path.is_dir()
+                batch_ops.append((source, target, is_dir, force, relative, admin))
+
+            overall_success, message, results = self.symlink_manager.run_batch(batch_ops)
+
+            for (source, target), (_, _, op_success, op_msg) in zip(operations, results):
+                if op_success:
+                    self._add_result(source, target, "Success", op_msg)
+                    self.settings_manager.record_creation(source, target, True, op_msg)
+                    self.settings_manager.add_to_history(source, 'source')
+                    self.settings_manager.add_to_history(target, 'target')
+                    self.settings_manager.add_symlink(source, target, notes="")
+                else:
+                    self._add_result(source, target, "Failed", op_msg)
+
+            total = len(operations)
+            success_count = sum(1 for _, _, ok, _ in results if ok)
+            fail_count = total - success_count
+            self._finish_batch(success_count, fail_count, total)
+            return
+
+        # ---- Confirm-each path ----
         success_count = 0
         fail_count = 0
         admin_offered = False
@@ -455,15 +483,25 @@ class BatchOperationsWidget(QWidget):
                 source, target_path_full, relative, force, admin
             )
 
-            # Handle admin-required response
+            # Handle admin-required response — offer to retry with admin mode
             if not success and message == "ADMIN_REQUIRED" and not admin_offered:
                 admin_offered = True
                 self.progress_bar.setValue(idx + 1)
-                self._offer_admin_relaunch()
-                # After relaunch offer, stop the batch
-                self._add_result(source, target_path_full, "Failed",
-                                 "Admin privileges required — restart app as admin")
-                fail_count += 1
+                reply = QMessageBox.question(
+                    self,
+                    "Administrator Privileges Required",
+                    "Creating symlinks on Windows requires administrator privileges.\n\n"
+                    "Do you want to retry with Admin mode enabled?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    # Re-run the batch with admin=True
+                    self.admin_checkbox.setChecked(True)
+                    self.run_batch()
+                else:
+                    self._add_result(source, target_path_full, "Failed",
+                                     "Admin privileges required")
+                    fail_count += 1
                 break
 
             if success:
@@ -487,20 +525,6 @@ class BatchOperationsWidget(QWidget):
             self.progress_bar.setValue(idx + 1)
 
         self._finish_batch(success_count, fail_count, len(operations))
-
-    def _offer_admin_relaunch(self):
-        """Offer to relaunch the entire app as administrator."""
-        if not self.symlink_manager.is_windows():
-            return
-        reply = QMessageBox.question(
-            self,
-            "Administrator Privileges Required",
-            "Creating symlinks on Windows requires administrator privileges.\n\n"
-            "Do you want to restart the application as administrator?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self.symlink_manager.relaunch_as_admin()
 
     def _finish_batch(self, success_count, fail_count, total):
         """Show final summary after batch completes."""
