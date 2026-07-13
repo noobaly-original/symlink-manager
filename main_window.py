@@ -601,6 +601,8 @@ class SymlinkMainWindow(QMainWindow):
     
     def refresh_symlinks_table(self):
         """Refresh the symlinks table and handle missing symlinks (once per session)."""
+        # Reload from disk to pick up changes from other components
+        self.settings_manager.reload_symlinks()
         # Verify all symlinks to get current status
         status = self.settings_manager.verify_symlinks()
         
@@ -1202,6 +1204,7 @@ class SymlinkMainWindow(QMainWindow):
 
     def _on_batch_operation_completed(self, source: str, success: bool, message: str):
         """Called when a batch operation completes — refresh the Manage tab."""
+        self.settings_manager.reload_symlinks()
         self.refresh_symlinks_table()
 
     def _open_merge_settings(self):

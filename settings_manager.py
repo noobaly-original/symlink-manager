@@ -138,6 +138,10 @@ class SettingsManager:
         """Get a setting value."""
         return self.settings.get(key, default)
     
+    def reload_symlinks(self) -> None:
+        """Reload symlinks data from disk (picks up changes from other instances)."""
+        self.symlinks = self._load_symlinks()
+
     def set_setting(self, key: str, value: Any) -> None:
         """Set a setting value."""
         self.settings[key] = value
