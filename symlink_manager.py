@@ -7,6 +7,7 @@ import os
 import sys
 import platform
 import subprocess
+import shutil
 import logging
 from pathlib import Path
 from typing import Tuple, Optional, List
@@ -512,3 +513,138 @@ call "{batch_path}" > "{log_path}" 2>&1
             }
         except Exception as e:
             return None
+
+    @staticmethod
+    def merge_directories(source: str, target_symlink: str) -> Tuple[bool, str, list]:
+        """
+        Two-way merge between the symlink's parent directory and the source directory.
+
+        For each item (file or folder) that exists in the symlink's parent directory
+        but does NOT exist in the source directory:
+          1. Copy the item into the source directory
+          2. Delete the item from the symlink's parent directory
+          3. Create a new symlink in the symlink's parent directory pointing to the
+             corresponding item in the source directory
+
+        Items that already exist in the source are left untouched (they are already
+        accessible through the main symlink). Duplicate items (same resolved path)
+        are silently skipped.
+
+        Args:
+            source: The original source directory that the symlink points to.
+            target_symlink: The path of the symlink itself (its parent is scanned).
+
+        Returns:
+            (success, message, new_symlinks) where new_symlinks is a list of
+            dicts with 'source' and 'target' keys for each newly created symlink.
+        """
+        source_path = Path(source)
+        symlink_path = Path(target_symlink)
+        scan_root = symlink_path.parent  # The directory containing the symlink
+
+        if not source_path.is_dir():
+            return False, f"Source is not a directory: {source}", []
+
+        if not scan_root.is_dir():
+            return False, f"Symlink parent directory does not exist: {scan_root}", []
+
+        logging.info(f"Merge: scanning '{scan_root}' for items not in source '{source}'")
+
+        merged = 0
+        skipped = 0
+        errors = 0
+        new_symlinks = []
+        seen_paths = set()  # Track resolved paths to silently ignore duplicates
+
+        try:
+            # Walk every item in the symlink's parent directory
+            for item in list(scan_root.iterdir()):
+                item_name = item.name
+
+                # Silently ignore duplicate resolved paths
+                try:
+                    resolved = item.resolve()
+                    if str(resolved) in seen_paths:
+                        continue
+                    seen_paths.add(str(resolved))
+                except Exception:
+                    pass
+
+                # Skip the symlink itself
+                if item.resolve() == symlink_path.resolve() or item.name == symlink_path.name:
+                    skipped += 1
+                    continue
+
+                # Skip items whose name matches the source directory name — that data
+                # belongs to the main symlink path and will be handled by its recreation.
+                if item_name == source_path.name:
+                    skipped += 1
+                    continue
+
+                # Skip items that are already symlinks pointing into the source
+                try:
+                    if item.is_symlink():
+                        resolved = item.resolve()
+                        if str(resolved).startswith(str(source_path.resolve())):
+                            skipped += 1
+                            continue
+                except Exception:
+                    pass
+
+                dest_in_source = source_path / item_name
+
+                # Check if this item already exists in the source
+                if dest_in_source.exists():
+                    # Compare timestamps: if the incoming item is newer,
+                    # overwrite the existing source copy
+                    try:
+                        src_mtime = dest_in_source.stat().st_mtime
+                        item_mtime = item.stat().st_mtime if not item.is_symlink() else 0
+                        if item_mtime <= src_mtime:
+                            skipped += 1
+                            continue
+                        # Incoming is newer — proceed to overwrite below
+                    except Exception:
+                        skipped += 1
+                        continue
+
+                # --- This item exists in the symlink dir but NOT in source,
+                #     or is newer than the source copy ---
+                try:
+                    if item.is_dir():
+                        # Copy the entire directory tree to source
+                        shutil.copytree(str(item), str(dest_in_source), dirs_exist_ok=True)
+                        # Remove the original from the symlink directory
+                        shutil.rmtree(str(item))
+                    else:
+                        # Copy the file to source
+                        shutil.copy2(str(item), str(dest_in_source))
+                        # Remove the original from the symlink directory
+                        item.unlink()
+
+                    # Record the symlink to be created (batch will handle it)
+                    new_target = str(scan_root / item_name)
+                    new_source = str(dest_in_source)
+                    dest_in_source_path = Path(dest_in_source)
+                    new_symlinks.append({
+                        'source': new_source,
+                        'target': new_target,
+                        'is_dir': dest_in_source_path.is_dir(),
+                    })
+                    merged += 1
+                    logging.info(f"Merge: moved '{item_name}' to source — queued for batch symlink creation")
+
+                except Exception as e:
+                    errors += 1
+                    logging.error(f"Merge: error processing '{item_name}': {e}")
+
+            logging.info(
+                f"Merge complete: {merged} item(s) merged, {skipped} skipped, "
+                f"{errors} error(s)"
+            )
+            summary = f"Merged {merged} item(s), {skipped} skipped, {errors} errors"
+            return True, summary, new_symlinks
+
+        except Exception as e:
+            logging.error(f"Merge failed for '{source}' -> '{scan_root}': {e}")
+            return False, f"Merge failed: {e}", []
