@@ -1440,28 +1440,67 @@ class SymlinkMainWindow(QMainWindow):
         needs_admin = False
 
         if merge_pairs:
+            # Check for potential overwrites before running merge
+            merge_approved = True
+            pending_overwrites = []
             for link in status['symlinks']:
                 target = link['target']
-                source = link['source']
-                if target in seen_targets:
-                    continue
                 symlink_parent = str(Path(target).parent.resolve())
                 for pair in merge_pairs:
                     if str(Path(pair['target']).resolve()) == symlink_parent:
-                        merge_ok, merge_msg, new_symlinks = self.symlink_manager.merge_directories(
-                            pair['source'], target
-                        )
-                        if not merge_ok:
-                            logging.warning(f"Persistence recovery: merge failed for '{target}': {merge_msg}")
-                        else:
-                            logging.info(f"Persistence recovery: merge for '{target}': {merge_msg}")
-                            for ns in new_symlinks:
-                                merge_tracked.append(ns)
-                                ns_target = ns['target']
-                                seen_targets.add(ns_target)
-                                batch_ops.append((ns['source'], ns_target,
-                                                  ns.get('is_dir', Path(ns['source']).is_dir()), False, False, False))
+                        # Check if any files in the parent dir would overwrite source files
+                        try:
+                            parent_path = Path(symlink_parent)
+                            src_path = Path(pair['source'])
+                            for item in parent_path.iterdir():
+                                if item.name == Path(target).name:
+                                    continue
+                                if item.is_symlink():
+                                    continue
+                                dest = src_path / item.name
+                                if dest.exists():
+                                    pending_overwrites.append(str(dest))
+                        except Exception:
+                            pass
                         break
+
+            if pending_overwrites:
+                reply = QMessageBox.question(
+                    self,
+                    "Merge — Overwrite Confirmation",
+                    f"Merge found {len(pending_overwrites)} file(s) that will be overwritten:\n\n"
+                    + "\n".join(pending_overwrites[:15])
+                    + ("\n..." if len(pending_overwrites) > 15 else "")
+                    + "\n\nAllow merge to overwrite these files?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    merge_approved = False
+                    logging.info("Merge: user declined overwrite — skipping merge phase")
+
+            if merge_approved:
+                for link in status['symlinks']:
+                    target = link['target']
+                    source = link['source']
+                    if target in seen_targets:
+                        continue
+                    symlink_parent = str(Path(target).parent.resolve())
+                    for pair in merge_pairs:
+                        if str(Path(pair['target']).resolve()) == symlink_parent:
+                            merge_ok, merge_msg, new_symlinks = self.symlink_manager.merge_directories(
+                                pair['source'], target
+                            )
+                            if not merge_ok:
+                                logging.warning(f"Persistence recovery: merge failed for '{target}': {merge_msg}")
+                            else:
+                                logging.info(f"Persistence recovery: merge for '{target}': {merge_msg}")
+                                for ns in new_symlinks:
+                                    merge_tracked.append(ns)
+                                    ns_target = ns['target']
+                                    seen_targets.add(ns_target)
+                                    batch_ops.append((ns['source'], ns_target,
+                                                      ns.get('is_dir', Path(ns['source']).is_dir()), False, False, False))
+                            break
 
         # ---- Phase 2: Add missing symlinks to batch ----
         if not missing:
