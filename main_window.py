@@ -1459,7 +1459,18 @@ class SymlinkMainWindow(QMainWindow):
                                     continue
                                 dest = src_path / item.name
                                 if dest.exists():
-                                    pending_overwrites.append(str(dest))
+                                    # Compare timestamps: only flag if the
+                                    # incoming file is strictly newer than
+                                    # what's already in the source
+                                    try:
+                                        src_mtime = dest.stat().st_mtime
+                                        item_mtime = item.stat().st_mtime
+                                        if item_mtime > src_mtime:
+                                            pending_overwrites.append(
+                                                f"'{item.name}' (incoming) → '{dest}' (existing)"
+                                            )
+                                    except Exception:
+                                        pending_overwrites.append(str(dest))
                         except Exception:
                             pass
                         break

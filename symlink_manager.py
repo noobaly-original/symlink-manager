@@ -595,10 +595,21 @@ call "{batch_path}" > "{log_path}" 2>&1
 
                 # Check if this item already exists in the source
                 if dest_in_source.exists():
-                    skipped += 1
-                    continue
+                    # Compare timestamps: if the incoming item is newer,
+                    # overwrite the existing source copy
+                    try:
+                        src_mtime = dest_in_source.stat().st_mtime
+                        item_mtime = item.stat().st_mtime if not item.is_symlink() else 0
+                        if item_mtime <= src_mtime:
+                            skipped += 1
+                            continue
+                        # Incoming is newer — proceed to overwrite below
+                    except Exception:
+                        skipped += 1
+                        continue
 
-                # --- This item exists in the symlink dir but NOT in source ---
+                # --- This item exists in the symlink dir but NOT in source,
+                #     or is newer than the source copy ---
                 try:
                     if item.is_dir():
                         # Copy the entire directory tree to source

@@ -331,23 +331,49 @@ class TestMergeDirectories:
 
     @needs_symlinks
     def test_merge_skips_existing_in_source(self, temp_dirs):
-        """Items that already exist in the source should be skipped."""
+        """Items that already exist in the source should be skipped when the
+        source copy is newer."""
         source_dir, target_dir, tmp_root = temp_dirs
         main_symlink = target_dir / "main"
         success, _ = SymlinkManager.create_symlink(str(source_dir), str(main_symlink))
         assert success
 
-        # Create a file that already exists in source
+        # Create a file in source first (older), then in target (newer)
         (source_dir / "shared.txt").write_text("in source")
+        import time
+        time.sleep(0.05)  # ensure the target file has a newer timestamp
         (target_dir / "shared.txt").write_text("in target")
 
         ok, msg, new_syms = SymlinkManager.merge_directories(
             str(source_dir), str(main_symlink)
         )
         assert ok
-        # Should NOT have been merged (it exists in source)
-        # The source copy should remain unchanged
-        assert (source_dir / "shared.txt").read_text() == "in source"
+        # The target file is newer, so it SHOULD overwrite the source
+        assert (source_dir / "shared.txt").read_text() == "in target"
+        # The target should now be a symlink
+        assert (target_dir / "shared.txt").is_symlink()
+        assert len(new_syms) == 1
+
+    @needs_symlinks
+    def test_merge_skips_when_source_newer(self, temp_dirs):
+        """Items in target that are older than the source should be skipped."""
+        source_dir, target_dir, tmp_root = temp_dirs
+        main_symlink = target_dir / "main"
+        success, _ = SymlinkManager.create_symlink(str(source_dir), str(main_symlink))
+        assert success
+
+        # Create a file in target first, then in source (newer)
+        (target_dir / "shared.txt").write_text("older in target")
+        import time
+        time.sleep(0.05)
+        (source_dir / "shared.txt").write_text("newer in source")
+
+        ok, msg, new_syms = SymlinkManager.merge_directories(
+            str(source_dir), str(main_symlink)
+        )
+        assert ok
+        # Source is newer — should NOT overwrite, should skip
+        assert (source_dir / "shared.txt").read_text() == "newer in source"
         assert len(new_syms) == 0
 
     @needs_symlinks
