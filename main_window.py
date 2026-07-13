@@ -1202,8 +1202,7 @@ class SymlinkMainWindow(QMainWindow):
 
     def _on_batch_operation_completed(self, source: str, success: bool, message: str):
         """Called when a batch operation completes — refresh the Manage tab."""
-        if self.tabs.currentIndex() == 1:
-            self.refresh_symlinks_table()
+        self.refresh_symlinks_table()
 
     def _open_merge_settings(self):
         """Open the Merge Settings dialog."""
