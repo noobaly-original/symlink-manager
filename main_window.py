@@ -5,6 +5,8 @@ Main application window for the Symlink Manager.
 import sys
 import os
 import uuid
+import logging
+import shutil
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
@@ -66,6 +68,14 @@ class SymlinkMainWindow(QMainWindow):
         
         self.initUI()
         self.load_settings()
+
+        # Persistence timer — periodically checks and recreates missing symlinks
+        self._persist_timer = QTimer(self)
+        self._persist_timer.setInterval(60_000)  # every 60 seconds
+        self._persist_timer.timeout.connect(self._run_persistence_check)
+        if self.settings_manager.get_setting('persist_symlinks', False):
+            self._persist_timer.start()
+            logging.info("Persistence timer started (interval=60s)")
         
     def showEvent(self, event):
         """Restore maximized state after the window is first shown."""
@@ -132,6 +142,7 @@ class SymlinkMainWindow(QMainWindow):
         
         # Tab 3: Batch Operations
         self.batch_widget = BatchOperationsWidget()
+        self.batch_widget.operation_completed.connect(self._on_batch_operation_completed)
         self.tabs.addTab(self.batch_widget, "Batch")
 
         # Tab 4: History & Statistics
@@ -432,8 +443,8 @@ class SymlinkMainWindow(QMainWindow):
         layout.addWidget(table_label)
         
         self.symlinks_table = QTableWidget()
-        self.symlinks_table.setColumnCount(5)
-        self.symlinks_table.setHorizontalHeaderLabels(['Target', 'Source', 'Status', 'Notes', 'Created'])
+        self.symlinks_table.setColumnCount(6)
+        self.symlinks_table.setHorizontalHeaderLabels(['Target', 'Source', 'Status', 'Notes', 'Created', 'Merge'])
         # Interactive mode — user can resize all columns manually.
         header = self.symlinks_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -443,10 +454,12 @@ class SymlinkMainWindow(QMainWindow):
         self.symlinks_table.setColumnWidth(2, 80)   # Status
         self.symlinks_table.setColumnWidth(3, 150)  # Notes
         self.symlinks_table.setColumnWidth(4, 90)   # Created
+        self.symlinks_table.setColumnWidth(5, 60)   # Merge
         self.symlinks_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.symlinks_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.symlinks_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.symlinks_table.customContextMenuRequested.connect(self.show_manage_table_context_menu)
+        self.symlinks_table.itemChanged.connect(self._on_symlinks_table_item_changed)
         
         layout.addWidget(self.symlinks_table)
         
@@ -550,6 +563,15 @@ class SymlinkMainWindow(QMainWindow):
             created = link.get('created_at', '')[:10]
             created_item = QTableWidgetItem(created)
             self.symlinks_table.setItem(row, 4, created_item)
+
+            # Merge checkbox
+            # Merge checkbox — tied to the source directory, not the symlink
+            merge_enabled = self.settings_manager.is_merge_source(link['source'])
+            merge_check = QTableWidgetItem()
+            merge_check.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            merge_check.setCheckState(Qt.CheckState.Checked if merge_enabled else Qt.CheckState.Unchecked)
+            merge_check.setData(Qt.ItemDataRole.UserRole + 1, link['source'])  # store source for callback
+            self.symlinks_table.setItem(row, 5, merge_check)
         
         # Update status
         self.update_symlinks_status()
@@ -917,10 +939,28 @@ class SymlinkMainWindow(QMainWindow):
         )
         self.start_on_login_checkbox.toggled.connect(self._on_start_on_login_toggled)
         tray_layout.addWidget(self.start_on_login_checkbox)
+
+        self.persist_symlinks_checkbox = QCheckBox("Persist symlinks — automatically recreate missing symlinks")
+        self.persist_symlinks_checkbox.setChecked(
+            self.settings_manager.get_setting('persist_symlinks', False)
+        )
+        self.persist_symlinks_checkbox.toggled.connect(self._on_persist_symlinks_toggled)
+        tray_layout.addWidget(self.persist_symlinks_checkbox)
+
+        self.merge_management_checkbox = QCheckBox("Merge management — merge source into symlink folder before recreating")
+        self.merge_management_checkbox.setChecked(
+            self.settings_manager.get_setting('merge_management', False)
+        )
+        self.merge_management_checkbox.toggled.connect(self._on_merge_management_toggled)
+        tray_layout.addWidget(self.merge_management_checkbox)
         
         tray_info = QLabel(
             "When enabled, closing the window will minimize it to the system tray "
-            "instead of quitting the application. Use the tray icon to show or quit."
+            "instead of quitting the application. Use the tray icon to show or quit.\n\n"
+            "Persistence checks all tracked symlinks every 60 seconds and "
+            "automatically recreates any that are missing.\n\n"
+            "Merge management copies source directory contents into the symlink's "
+            "folder before recreating the symlink (newer files override)."
         )
         tray_info.setWordWrap(True)
         tray_info.setStyleSheet("font-size: 9pt; color: #888;")
@@ -934,7 +974,7 @@ class SymlinkMainWindow(QMainWindow):
         info_text.setWordWrap(True)
         info_text.setStyleSheet("font-size: 10pt; line-height: 1.5;")
         info_text.setText(
-            f"<b>Symlink Manager v2.0.2</b><br>"
+            f"<b>Symlink Manager v2.1.0</b><br>"
             f"<b>Platform:</b> {self.get_platform_name()}<br>"
             f"<b>Python:</b> {sys.version.split()[0]}"
         )
@@ -964,6 +1004,49 @@ class SymlinkMainWindow(QMainWindow):
                 f"Failed to {'enable' if checked else 'disable'} autostart. "
                 "Try running as administrator or check permissions."
             )
+
+    def _on_persist_symlinks_toggled(self, checked: bool):
+        """Handle persist-symlinks checkbox toggle."""
+        self.settings_manager.set_setting('persist_symlinks', checked)
+        if checked:
+            self._persist_timer.start()
+            logging.info("Persistence enabled — timer started (interval=60s)")
+            # Run an immediate check so the user sees the effect right away
+            self._run_persistence_check()
+        else:
+            self._persist_timer.stop()
+            logging.info("Persistence disabled — timer stopped")
+
+    def _on_symlinks_table_item_changed(self, item: QTableWidgetItem):
+        """Handle changes in the symlinks table (e.g. Merge checkbox toggle)."""
+        # Only process the Merge column (index 5)
+        if item.column() != 5:
+            return
+        source = item.data(Qt.ItemDataRole.UserRole + 1)
+        if not source:
+            return
+        merge_enabled = item.checkState() == Qt.CheckState.Checked
+        # Block signals to prevent recursion when we update the item
+        self.symlinks_table.blockSignals(True)
+        self.settings_manager.set_merge_source(source, merge_enabled)
+        # Sync all rows that share this source so they show the same state
+        self.refresh_symlinks_table()
+        self.symlinks_table.blockSignals(False)
+        logging.info(f"Merge {'enabled' if merge_enabled else 'disabled'} for source '{source}'")
+
+    def _on_batch_operation_completed(self, source: str, success: bool, message: str):
+        """Called when a batch operation completes — refresh the Manage tab."""
+        # Refresh the Manage tab's symlinks table so new symlinks appear
+        if self.tabs.currentIndex() == 1:
+            self.refresh_symlinks_table()
+        else:
+            # Even if not visible, mark it stale so it refreshes on tab switch
+            pass
+
+    def _on_merge_management_toggled(self, checked: bool):
+        """Handle merge-management checkbox toggle."""
+        self.settings_manager.set_setting('merge_management', checked)
+        logging.info(f"Merge management {'enabled' if checked else 'disabled'}")
     
     def browse_source(self):
         """Open file dialog to select source."""
@@ -1203,6 +1286,130 @@ class SymlinkMainWindow(QMainWindow):
             self.quit_application()
             event.accept()
     
+    def _run_persistence_check(self):
+        """Check all tracked symlinks and recreate any that are missing."""
+        symlinks = self.settings_manager.get_all_symlinks()
+        if not symlinks:
+            logging.debug("Persistence check: no tracked symlinks to verify")
+            return
+
+        status = self.settings_manager.verify_symlinks()
+        missing = [link for link in status['symlinks'] if link['status'] == 'missing']
+
+        if not missing:
+            logging.debug("Persistence check: all symlinks are present")
+            return
+
+        logging.info(f"Persistence check: {len(missing)} symlink(s) missing — attempting recovery")
+        global_merge = self.settings_manager.get_setting('merge_management', False)
+
+        # ---- Phase 1: Merge (per-source, collects batch operations) ----
+        batch_ops = []       # (source, target, is_dir, force, relative, admin)
+        merge_tracked = []   # new sub-symlinks to track after batch
+        needs_admin = False
+
+        for entry in missing:
+            source = entry['source']
+            target = entry['target']
+            try:
+                source_path = Path(source)
+                # Per-source merge: only merge if the source directory has merge enabled
+                # AND the global merge_management setting is on
+                if global_merge and self.settings_manager.is_merge_source(source) and source_path.is_dir():
+                    merge_ok, merge_msg, new_symlinks = self.symlink_manager.merge_directories(source, target)
+                    if not merge_ok:
+                        logging.warning(f"Persistence recovery: merge failed for '{target}': {merge_msg}")
+                    else:
+                        logging.info(f"Persistence recovery: {merge_msg} for '{target}'")
+                        for ns in new_symlinks:
+                            merge_tracked.append(ns)
+                            # Add to batch ops for symlink creation (is_dir comes from merge)
+                            batch_ops.append((ns['source'], ns['target'],
+                                              ns.get('is_dir', Path(ns['source']).is_dir()), False, False, False))
+
+                # Add the main symlink to batch operations
+                is_dir = source_path.is_dir() if source_path.exists() else False
+                batch_ops.append((source, target, is_dir, False, False, False))
+
+            except Exception as e:
+                logging.error(f"Persistence recovery: exception for '{target}': {e}")
+
+        if not batch_ops:
+            logging.debug("Persistence check: no operations to perform")
+            return
+
+        # ---- Phase 2: Run all symlink creations as a single batch ----
+        overall_success, batch_msg, results = self.symlink_manager.run_batch(batch_ops)
+
+        # Check if admin was required and we weren't elevated
+        if not overall_success and "ADMIN_REQUIRED" in batch_msg:
+            needs_admin = True
+            # Some operations may have succeeded even in partial failure
+            recreated = sum(1 for _, _, ok, _ in results if ok)
+            failed = sum(1 for _, _, ok, _ in results if not ok)
+
+            if recreated > 0:
+                logging.info(f"Persistence recovery: {recreated} symlink(s) recreated without admin")
+
+            logging.warning(f"Persistence recovery: {failed} symlink(s) require admin privileges")
+            self.statusBar().showMessage(
+                f"Persistence: {recreated} recreated, {failed} need admin — retrying with admin in 15s",
+                8000
+            )
+
+            # Schedule a retry with admin=True after 15 seconds
+            QTimer.singleShot(15_000, lambda: self._retry_persistence_with_admin(
+                [op for op, (_, _, ok, _) in zip(batch_ops, results) if not ok]
+            ))
+        else:
+            recreated = sum(1 for _, _, ok, _ in results if ok)
+            failed = sum(1 for _, _, ok, _ in results if not ok)
+            if recreated:
+                logging.info(f"Persistence recovery: {recreated} symlink(s) recreated via batch")
+            if failed:
+                logging.warning(f"Persistence recovery: {failed} symlink(s) failed")
+
+        # Track new sub-symlinks from merge
+        for ns in merge_tracked:
+            self.settings_manager.add_symlink(ns['source'], ns['target'], notes="")
+            logging.info(f"Persistence recovery: tracked new symlink from merge: '{ns['target']}' -> '{ns['source']}'")
+
+        if recreated:
+            self.statusBar().showMessage(
+                f"Persistence: recreated {recreated} symlink(s)",
+                5000
+            )
+            if self.tabs.currentIndex() == 1:  # Manage tab
+                self.refresh_symlinks_table()
+
+    def _retry_persistence_with_admin(self, failed_ops: list):
+        """Retry failed symlink creations with admin=True after a delay."""
+        if not failed_ops:
+            return
+
+        logging.info(f"Persistence retry: attempting {len(failed_ops)} symlink(s) with admin privileges")
+        # Rebuild batch ops with admin=True and force=True (since target might exist partially)
+        retry_ops = [(s, t, d, True, r, True) for s, t, d, r, _, _ in
+                     [(*op[:4], op[4] if len(op) > 4 else False) for op in failed_ops]]
+
+        # Notify user
+        QMessageBox.information(
+            self,
+            "Admin Retry",
+            f"Attempting to create {len(retry_ops)} symlink(s) with administrator privileges.\n\n"
+            "A UAC prompt may appear. Please approve it to complete the operation."
+        )
+
+        overall_success, batch_msg, results = self.symlink_manager.run_batch(retry_ops)
+        recreated = sum(1 for _, _, ok, _ in results if ok)
+        failed = sum(1 for _, _, ok, _ in results if not ok)
+
+        logging.info(f"Persistence retry: {recreated} symlink(s) recreated with admin, {failed} failed")
+        if recreated:
+            self.statusBar().showMessage(f"Persistence: {recreated} symlink(s) recreated with admin", 5000)
+            if self.tabs.currentIndex() == 1:
+                self.refresh_symlinks_table()
+
     @staticmethod
     def get_platform_name() -> str:
         """Get human-readable platform name."""

@@ -47,11 +47,11 @@ def setup_logging():
 def main():
     """Main entry point for the application."""
     log_path = setup_logging()
-    logging.info(f"Symlink Manager v2.0.2 starting — log: {log_path}")
+    logging.info(f"Symlink Manager v2.1.0 starting — log: {log_path}")
     
     app = QApplication(sys.argv)
     app.setApplicationName("Symlink Manager")
-    app.setApplicationVersion("2.0.2")
+    app.setApplicationVersion("2.1.0")
     
     # Don't quit when the last window is closed (for system tray support)
     app.setQuitOnLastWindowClosed(False)

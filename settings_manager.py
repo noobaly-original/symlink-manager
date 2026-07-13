@@ -60,6 +60,8 @@ class SettingsManager:
             'last_target_dir': str(Path.home()),
             'minimize_to_tray': True,
             'start_on_login': False,
+            'persist_symlinks': False,
+            'merge_management': False,
         }
     
     def _load_history(self) -> Dict[str, List[str]]:
@@ -90,6 +92,7 @@ class SettingsManager:
         # Default symlinks structure
         return {
             'symlinks': [],  # List of tracked symlinks
+            'merge_sources': [],  # Source paths with merge enabled
         }
     
     def save_settings(self) -> bool:
@@ -324,6 +327,21 @@ class SettingsManager:
                 return True
         return False
     
+    def is_merge_source(self, source: str) -> bool:
+        """Check if a source directory has merge enabled."""
+        return source in self.symlinks.get('merge_sources', [])
+
+    def set_merge_source(self, source: str, enabled: bool) -> None:
+        """Enable or disable merge for a source directory."""
+        merge_sources = self.symlinks.setdefault('merge_sources', [])
+        if enabled:
+            if source not in merge_sources:
+                merge_sources.append(source)
+        else:
+            if source in merge_sources:
+                merge_sources.remove(source)
+        self.save_symlinks()
+
     def get_symlink_by_target(self, target: str) -> dict:
         """Get a symlink entry by target path."""
         for link in self.symlinks['symlinks']:
@@ -368,6 +386,7 @@ class SettingsManager:
                 'source': link['source'],
                 'status': link_status,
                 'notes': link['notes'],
+                'merge_enabled': link['source'] in self.symlinks.get('merge_sources', []),
             })
         
         return status

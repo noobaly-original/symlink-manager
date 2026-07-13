@@ -16,7 +16,9 @@ A modern, cross-platform GUI application for creating and managing symbolic link
 - 📊 **History & Statistics** — View creation history and most-used paths
 - 🖥️ **System Tray** — Minimize to tray, right-click menu with Open/Close, double-click to restore
 - 🚀 **Autostart** — Option to launch on system login (starts minimized to tray)
-- 📦 **Batch Operations** — Create multiple symlinks at once from a CSV or manual list
+- ♻️ **Symlink Persistence** — Automatically recreate missing symlinks every 60 seconds (optional, configurable in Settings)
+- � **Merge Management** — Before recreating a missing symlink, copy source directory contents into the symlink folder (newer files override)
+- �📦 **Batch Operations** — Create multiple symlinks at once from a CSV or manual list
 - 🏗️ **PyInstaller Bundle** — Compatible with standalone .exe builds; elevation, autostart, and drag-drop all work in bundled mode
 
 ### Options
@@ -99,6 +101,8 @@ The **Settings** tab lets you:
 - Switch between **Dark**, **Light**, **Monokai**, **Pastel Pink**, **Pastel Blue**, **Pastel Green**, and **Pastel Orange** themes
 - Toggle **Minimize to system tray on close** — closing the window minimizes to tray instead of quitting
 - Toggle **Start on system login (minimized to tray)** — register the app to launch automatically when you log in
+- Toggle **Persist symlinks** — automatically recreate missing symlinks every 60 seconds (cross-platform)
+- Toggle **Merge management** — merge source directory contents into the symlink's folder before recreating (newer files override)
 - View platform and Python version info
 
 ### System Tray
@@ -121,6 +125,38 @@ The **Start on system login** option registers the application to launch automat
 
 When launched via autostart, the window starts **minimized to the system tray** so it doesn't interrupt your workflow.
 
+### Symlink Persistence
+
+When enabled in **Settings**, the application automatically checks all tracked symlinks every 60 seconds and recreates any that are missing:
+
+| Feature | Detail |
+|---|---|
+| **Check interval** | Every 60 seconds |
+| **Scope** | All symlinks in the tracked list (created via the app) |
+| **Recreation** | Uses the original source path automatically |
+| **Admin fallback** (Windows) | If a symlink requires admin privileges, the app retries with elevated mode |
+| **Status bar** | Shows a notification when symlinks are recreated |
+| **Logging** | All persistence operations are logged via `logging` (debug, info, warning, error levels) |
+| **Cross-platform** | Works identically on Windows, macOS, and Linux |
+
+> 💡 Enable persistence if you want your symlinks to survive accidental deletion, cleanup tools, or other processes that remove them. The app will silently restore them in the background.
+
+### Merge Management
+
+When enabled alongside persistence, the **Merge management** option copies the contents of the source directory into the folder that contains the symlink **before** recreating it:
+
+| Detail | Description |
+|---|---|
+| **Behavior** | Recursively copies all files and subdirectories from the source into the symlink's parent directory |
+| **Newer files win** | For existing files, the source file only overwrites the destination if its modification time is newer |
+| **Existing files** | Files present in the destination but not in the source are preserved (not deleted) |
+| **Symlink recreation** | After the merge, the old symlink is removed and a fresh symlink is created pointing back to the source |
+| **Safety** | Skips files that are symlinks pointing back to the source to avoid circular copies |
+| **Logging** | Every merge operation is logged (files copied, skipped, errors) |
+| **Batch-aware** | All symlink creations during a persistence cycle are batched into a single `run_batch()` call — including sub-symlinks produced by merge operations |
+
+> 💡 Merge management is useful when you want to keep a local copy of the symlinked files in the same folder as the symlink itself. This ensures the data is available even if the symlink's source becomes temporarily unavailable.
+
 ---
 
 ## Configuration Files
@@ -134,7 +170,7 @@ All data is stored as JSON in a platform-specific directory:
 
 | File | Contents |
 |---|---|
-| `settings.json` | Window geometry, theme preference, last-used directories, minimize-to-tray, autostart |
+| `settings.json` | Window geometry, theme preference, last-used directories, minimize-to-tray, autostart, symlink persistence, merge management |
 | `history.json` | Creation records (last 200), recently used source/target paths |
 | `managed_symlinks.json` | Tracked symlinks with notes and status |
 
@@ -197,6 +233,7 @@ symlink-manager/
 ├── build.sh / build.bat    # Convenience build scripts
 ├── requirements.txt        # Python dependencies
 ├── README.md               # This file
+├── CHANGELOG.md            # Version history and release notes
 ├── BUILD_GUIDE.md          # Build and distribution instructions
 ├── RELEASE_NOTES.md        # Version history and changelog
 └── SYMLINK_MANAGEMENT.md   # Symlink tracking reference

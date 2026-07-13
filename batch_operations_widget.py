@@ -539,6 +539,8 @@ class BatchOperationsWidget(QWidget):
             f"✗ Failed: {fail_count}\n"
             f"Total processed: {total}"
         )
+        self.operation_completed.emit("", success_count > 0,
+                                      f"Batch: {success_count} succeeded, {fail_count} failed")
 
     def _add_result(self, source: str, target: str, status: str, message: str):
         """Add a row to the results table."""
