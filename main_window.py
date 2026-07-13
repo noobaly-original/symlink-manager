@@ -1551,24 +1551,22 @@ class SymlinkMainWindow(QMainWindow):
             return
 
         logging.info(f"Persistence retry: attempting {len(failed_ops)} symlink(s) with admin privileges")
-        self._admin_retry_pending = False
+
         # Rebuild batch ops with admin=True and force=True (since target might exist partially)
         retry_ops = []
         for op in failed_ops:
             s, t, d, _, r, _ = op  # (source, target, is_dir, force, relative, admin)
             retry_ops.append((s, t, d, True, r, True))
 
-        # Notify user
-        QMessageBox.information(
-            self,
-            "Admin Retry",
-            f"Attempting to create {len(retry_ops)} symlink(s) with administrator privileges.\n\n"
-            "A UAC prompt may appear. Please approve it to complete the operation."
-        )
-
         overall_success, batch_msg, results = self.symlink_manager.run_batch(retry_ops)
         recreated = sum(1 for _, _, ok, _ in results if ok)
         failed = sum(1 for _, _, ok, _ in results if not ok)
+
+        # Only reset the retry flag if ALL symlinks were created, or if none
+        # required admin (allowing a fresh attempt next time)
+        if recreated == 0 or not any("ADMIN_REQUIRED" in msg or "UAC" in msg
+                                     for _, _, _, msg in results if not ok):
+            self._admin_retry_pending = False
 
         logging.info(f"Persistence retry: {recreated} symlink(s) recreated with admin, {failed} failed")
         if recreated:
